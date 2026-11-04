@@ -23,6 +23,11 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: Bridge/go.sum
 
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          go version
+
       - name: Install XcodeGen
         run: brew install xcodegen
 

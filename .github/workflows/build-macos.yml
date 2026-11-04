@@ -20,17 +20,17 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-      - name: Show toolchain
-        run: |
-          xcodebuild -version
-          swift --version
-          go version
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: Bridge/go.sum
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          go version
 
       - name: Install XcodeGen
         run: brew install xcodegen
