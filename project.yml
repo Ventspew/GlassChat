@@ -1,0 +1,74 @@
+name: GlassChat
+options:
+  bundleIdPrefix: com.glasschat
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+targets:
+  GlassChat:
+    type: application
+    platform: macOS
+    sources:
+      - path: GlassChat
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.glasschat.app
+        PRODUCT_NAME: GlassChat
+        INFOPLIST_FILE: GlassChat/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+        COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_STRICT_CONCURRENCY: complete
+    entitlements:
+      path: GlassChat/Resources/GlassChat.entitlements
+    postCompileScripts:
+      - name: Embed glasschat-bridge
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          BRIDGE_SRC="${SRCROOT}/Bridge/glasschat-bridge"
+          if [[ ! -x "${BRIDGE_SRC}" ]]; then
+            echo "Building glasschat-bridge…"
+            (cd "${SRCROOT}/Bridge" && CGO_ENABLED=0 go build -o glasschat-bridge ./cmd/glasschat-bridge)
+          fi
+          DEST="${BUILT_PRODUCTS_DIR}/${EXECUTABLE_FOLDER_PATH}/glasschat-bridge"
+          cp "${SRCROOT}/Bridge/glasschat-bridge" "${DEST}"
+          chmod +x "${DEST}"
+    scheme:
+      testTargets:
+        - GlassChatTests
+  GlassChatTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: GlassChatTests
+    dependencies:
+      - target: GlassChat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.glasschat.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+schemes:
+  GlassChat:
+    build:
+      targets:
+        GlassChat: all
+        GlassChatTests: [test]
+    test:
+      targets:
+        - GlassChatTests
+    run:
+      config: Debug

@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: Bridge/go.sum
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build bridge + app
+        run: |
+          cd Bridge
+          CGO_ENABLED=0 go build -o glasschat-bridge ./cmd/glasschat-bridge
+          cd ..
+          xcodegen generate
+          xcodebuild \
+            -project GlassChat.xcodeproj \
+            -scheme GlassChat \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+          APP_PATH=$(find DerivedData/Build/Products -name 'GlassChat.app' -print -quit)
+          ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" GlassChat-macOS.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GlassChat-macOS.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -1,0 +1,13 @@
+.DS_Store
+DerivedData/
+build/
+.swiftpm/
+.idea/
+*.xcuserstate
+xcuserdata/
+GlassChat.xcodeproj/project.xcworkspace/xcuserdata/
+GlassChat.xcodeproj/xcuserdata/
+Bridge/glasschat-bridge
+DerivedData/
+GlassChat-macOS.zip
+*.sock

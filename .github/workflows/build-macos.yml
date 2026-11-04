@@ -1,0 +1,74 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build GlassChat.app
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          go version
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: Bridge/go.sum
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build glasschat-bridge
+        working-directory: Bridge
+        run: |
+          CGO_ENABLED=0 go test ./...
+          CGO_ENABLED=0 go build -o glasschat-bridge ./cmd/glasschat-bridge
+          ./glasschat-bridge -h || true
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build GlassChat
+        run: |
+          xcodebuild \
+            -project GlassChat.xcodeproj \
+            -scheme GlassChat \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package .app
+        run: |
+          APP_PATH=$(find DerivedData/Build/Products -name 'GlassChat.app' -print -quit)
+          echo "Found app at: ${APP_PATH}"
+          test -d "${APP_PATH}"
+          test -x "${APP_PATH}/Contents/MacOS/glasschat-bridge"
+          ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" GlassChat-macOS.zip
+          ls -lh GlassChat-macOS.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlassChat-macOS
+          path: GlassChat-macOS.zip
+          if-no-files-found: error
