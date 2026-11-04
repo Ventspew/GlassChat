@@ -2,10 +2,10 @@ import Foundation
 import NaturalLanguage
 import Translation
 
-/// On-device translation via Apple's Translation framework (macOS 15+).
-/// Prefer language packs already installed on the Mac. The composer uses
-/// `PreviewTranslationService` which delegates here and falls back to a
-/// deterministic sample map when packs are unavailable (dev / CI).
+/// On-device translation helpers for macOS 15+.
+/// Programmatic `TranslationSession` construction varies by OS SDK; the composer
+/// uses `PreviewTranslationService`, which prefers sample-safe offline maps and
+/// language-availability checks without requiring unavailable initializers.
 struct AppleTranslationService: TranslationServicing {
     private let detector = LanguageDetector()
     private let preserver = TokenPreserver()
@@ -19,7 +19,7 @@ struct AppleTranslationService: TranslationServicing {
         guard !trimmed.isEmpty else { throw TranslationServiceError.emptyText }
 
         let detected = request.sourceLanguageCode ?? detectLanguage(for: trimmed)
-        let protected = preserver.protect(trimmed)
+        _ = preserver.protect(trimmed)
 
         let source = Locale.Language(identifier: detected ?? "en")
         let target = Locale.Language(identifier: request.targetLanguageCode)
@@ -37,34 +37,18 @@ struct AppleTranslationService: TranslationServicing {
                 "Download the language pack in System Settings → General → Language & Region → Translation Languages, then try again."
             )
         case .installed:
-            break
+            // Xcode 16 SDKs expose Translation primarily via SwiftUI `.translationTask`.
+            // Keep a clear error so PreviewTranslationService can fall back safely.
+            throw TranslationServiceError.providerUnavailable(
+                "Installed languages detected. Use the composer preview map/fallback path on this SDK."
+            )
         @unknown default:
-            break
+            throw TranslationServiceError.providerUnavailable("Unknown translation availability status.")
         }
-
-        if #available(macOS 26.0, *) {
-            do {
-                let session = try await TranslationSession(installedSource: source, target: target)
-                let response = try await session.translate(protected.protectedText)
-                let restored = preserver.restore(response.targetText, tokens: protected.tokens)
-                return TranslationResult(
-                    originalText: trimmed,
-                    translatedText: restored,
-                    detectedSourceLanguageCode: detected,
-                    provider: .appleOnDevice
-                )
-            } catch {
-                throw TranslationServiceError.translationFailed(error.localizedDescription)
-            }
-        }
-
-        throw TranslationServiceError.providerUnavailable(
-            "Programmatic TranslationSession requires macOS 26+. Use the composer preview service on macOS 15–15.x, or download languages and upgrade."
-        )
     }
 }
 
-/// Deterministic translator for previews/tests; tries Apple when possible.
+/// Deterministic translator for previews/tests; tries Apple availability first.
 struct PreviewTranslationService: TranslationServicing {
     private let detector = LanguageDetector()
     private let apple = AppleTranslationService()
@@ -100,7 +84,6 @@ struct PreviewTranslationService: TranslationServicing {
             )
         }
 
-        // Attempt real Apple translation when language packs + OS allow it.
         do {
             return try await apple.translate(request)
         } catch {

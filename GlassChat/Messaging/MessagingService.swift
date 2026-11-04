@@ -2,9 +2,9 @@ import Foundation
 
 protocol MessagingService: AnyObject, Sendable {
     var connectionState: ConnectionState { get async }
-    func observeConnectionState() -> AsyncStream<ConnectionState>
-    func observeConversations() -> AsyncStream<[Conversation]>
-    func observeMessages(in chatID: ChatID) -> AsyncStream<[Message]>
+    func observeConnectionState() async -> AsyncStream<ConnectionState>
+    func observeConversations() async -> AsyncStream<[Conversation]>
+    func observeMessages(in chatID: ChatID) async -> AsyncStream<[Message]>
     func send(text: String, to chatID: ChatID, replyTo: MessageID?) async throws
     func setPinned(_ pinned: Bool, chatID: ChatID) async throws
     func markRead(chatID: ChatID) async throws

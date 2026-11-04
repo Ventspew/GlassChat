@@ -16,8 +16,12 @@ actor WhatsmeowMessagingService: MessagingService {
     private var eventHandlerID: UUID?
     private(set) var latestQRCode: String?
 
-    init(processManager: BridgeProcessManager = BridgeProcessManager()) {
+    init(processManager: BridgeProcessManager) {
         self.processManager = processManager
+    }
+
+    init() {
+        self.processManager = BridgeProcessManager()
     }
 
     var connectionState: ConnectionState { connection }
@@ -69,11 +73,9 @@ actor WhatsmeowMessagingService: MessagingService {
 
     func startBridgeAndConnect() async throws {
         setConnection(.connecting)
-        try await MainActor.run {
-            try processManager.ensureRunning()
-        }
+        try processManager.ensureRunning()
         try await processManager.waitForSocket()
-        let socketPath = await MainActor.run { processManager.socketURL.path }
+        let socketPath = processManager.socketURL.path
         let bridge = BridgeClient(socketPath: socketPath)
         try await bridge.start()
         client = bridge
@@ -271,9 +273,9 @@ actor WhatsmeowMessagingService: MessagingService {
         }
         // Ignore connect failure when unpaired — pairing creates the session.
         if client == nil {
-            try await MainActor.run { try processManager.ensureRunning() }
+            try processManager.ensureRunning()
             try await processManager.waitForSocket()
-            let socketPath = await MainActor.run { processManager.socketURL.path }
+            let socketPath = processManager.socketURL.path
             let bridge = BridgeClient(socketPath: socketPath)
             try await bridge.start()
             client = bridge
@@ -298,7 +300,8 @@ actor WhatsmeowMessagingService: MessagingService {
 
     private func publishMessages(_ chatID: ChatID) {
         let snapshot = messagesByChat[chatID] ?? []
-        for continuation in messageContinuations[chatID]?.values ?? [:] {
+        guard let values = messageContinuations[chatID]?.values else { return }
+        for continuation in values {
             continuation.yield(snapshot)
         }
     }

@@ -174,7 +174,8 @@ actor MockMessagingService: MessagingService {
 
     private func publishMessages(_ chatID: ChatID) {
         let snapshot = messagesByChat[chatID] ?? []
-        for continuation in messageContinuations[chatID]?.values ?? [:] {
+        guard let values = messageContinuations[chatID]?.values else { return }
+        for continuation in values {
             continuation.yield(snapshot)
         }
     }

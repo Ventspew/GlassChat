@@ -22,28 +22,38 @@ actor BridgeClient {
         self.connection = connection
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let lock = NSLock()
-            var resumed = false
-            func resumeOnce(_ result: Result<Void, Error>) {
-                lock.lock()
-                defer { lock.unlock() }
-                guard !resumed else { return }
-                resumed = true
-                switch result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
+            final class Once: @unchecked Sendable {
+                private let lock = NSLock()
+                private var resumed = false
+                let continuation: CheckedContinuation<Void, Error>
+
+                init(_ continuation: CheckedContinuation<Void, Error>) {
+                    self.continuation = continuation
+                }
+
+                func resume(_ result: Result<Void, Error>) {
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard !resumed else { return }
+                    resumed = true
+                    switch result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
                 }
             }
+
+            let once = Once(continuation)
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    resumeOnce(.success(()))
+                    once.resume(.success(()))
                 case .failed(let error):
-                    resumeOnce(.failure(error))
+                    once.resume(.failure(error))
                 case .cancelled:
-                    resumeOnce(.failure(CancellationError()))
+                    once.resume(.failure(CancellationError()))
                 default:
                     break
                 }

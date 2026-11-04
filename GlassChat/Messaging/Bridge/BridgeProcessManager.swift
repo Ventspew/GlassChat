@@ -1,8 +1,8 @@
 import Foundation
 
 /// Launches and supervises the bundled `glasschat-bridge` helper.
-@MainActor
-final class BridgeProcessManager {
+final class BridgeProcessManager: @unchecked Sendable {
+    private let lock = NSLock()
     private var process: Process?
     private let supportDirectory: URL
 
@@ -20,6 +20,9 @@ final class BridgeProcessManager {
     }
 
     func ensureRunning() throws {
+        lock.lock()
+        defer { lock.unlock() }
+
         try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
 
@@ -35,7 +38,6 @@ final class BridgeProcessManager {
             "-data", dataDirectory.path
         ]
         process.standardOutput = FileHandle.nullDevice
-        // Keep stderr visible in Console.app via a pipe if needed later.
         process.standardError = FileHandle.nullDevice
         try process.run()
         self.process = process
@@ -53,6 +55,8 @@ final class BridgeProcessManager {
     }
 
     func stop() {
+        lock.lock()
+        defer { lock.unlock() }
         process?.terminate()
         process = nil
         try? FileManager.default.removeItem(at: socketURL)
@@ -66,13 +70,12 @@ final class BridgeProcessManager {
             return resource
         }
 
-        // Development fallback: Bridge/glasschat-bridge next to the repo / derived sources.
         let candidates = [
             URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent() // Bridge/
-                .deletingLastPathComponent() // Messaging/
-                .deletingLastPathComponent() // GlassChat/
-                .deletingLastPathComponent() // repo root
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
                 .appendingPathComponent("Bridge/glasschat-bridge"),
             FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Projects/GlassChat/Bridge/glasschat-bridge")
