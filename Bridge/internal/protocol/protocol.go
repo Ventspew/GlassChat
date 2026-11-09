@@ -26,6 +26,7 @@ const (
 	MethodChatsList        = "chats.list"
 	MethodMessagesList     = "messages.list"
 	MethodMessagesSendText = "messages.send.text"
+	MethodMessagesMarkRead = "messages.markRead"
 
 	EventPairQR      = "session.pair.qr"
 	EventPairSuccess = "session.pair.success"

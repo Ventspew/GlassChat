@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -95,6 +97,7 @@ func (c *Client) start(ctx context.Context) error {
 	}
 
 	client := whatsmeow.NewClient(device, c.log.Sub("Client"))
+	applyCompanionFingerprint(client)
 	client.AddEventHandler(c.handleEvent)
 
 	c.mu.Lock()
@@ -108,7 +111,9 @@ func (c *Client) start(ctx context.Context) error {
 			return err
 		}
 		c.setState("connected", displayLabel(client))
+		_ = client.SendPresence(context.Background(), types.PresenceAvailable)
 		go c.refreshDirectory(context.Background())
+		go c.fetchAppState(context.Background())
 		return nil
 	}
 
@@ -137,12 +142,14 @@ func (c *Client) StartPairing(ctx context.Context) error {
 			}
 		}
 		c.setState("connected", displayLabel(client))
+		_ = client.SendPresence(ctx, types.PresenceAvailable)
 		c.sink("session.pair.success", map[string]any{
 			"jid":          client.Store.ID.String(),
 			"accountLabel": displayLabel(client),
 			"protocol":     "whatsapp",
 		})
 		go c.refreshDirectory(context.Background())
+		go c.fetchAppState(context.Background())
 		return nil
 	}
 
@@ -177,7 +184,9 @@ func (c *Client) StartPairing(ctx context.Context) error {
 					"accountLabel": displayLabel(client),
 					"protocol":     "whatsapp",
 				})
+				_ = client.SendPresence(context.Background(), types.PresenceAvailable)
 				go c.refreshDirectory(context.Background())
+				go c.fetchAppState(context.Background())
 			case "timeout":
 				c.setState("disconnected", "")
 				c.sink("session.pair.timeout", map[string]any{"detail": "QR code expired", "protocol": "whatsapp"})
@@ -217,7 +226,9 @@ func (c *Client) ConnectExisting(ctx context.Context) error {
 		return err
 	}
 	c.setState("connected", displayLabel(client))
+	_ = client.SendPresence(ctx, types.PresenceAvailable)
 	go c.refreshDirectory(ctx)
+	go c.fetchAppState(ctx)
 	return nil
 }
 
@@ -292,6 +303,45 @@ func (c *Client) ListChats() []ChatRecord {
 
 func (c *Client) ListMessages(chatID string, limit int) []MessageRecord {
 	return c.store.ListMessages(chatID, limit)
+}
+
+func (c *Client) MarkRead(ctx context.Context, chatID string, messageIDs []string) error {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.IsLoggedIn() {
+		return fmt.Errorf("not connected")
+	}
+	jid, err := types.ParseJID(chatID)
+	if err != nil {
+		return err
+	}
+	ids := make([]types.MessageID, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		ids = append(ids, types.MessageID(id))
+	}
+	if len(ids) == 0 {
+		// Mark latest known message if caller didn't pass ids.
+		msgs := c.store.ListMessages(chatID, 1)
+		if len(msgs) == 0 {
+			return nil
+		}
+		ids = append(ids, types.MessageID(msgs[len(msgs)-1].ID))
+	}
+	return client.MarkRead(ctx, ids, time.Now(), jid, jid)
+}
+
+func (c *Client) fetchAppState(ctx context.Context) {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.IsLoggedIn() {
+		return
+	}
+	// Pull contact/pin/mute patches when available — best-effort.
+	_ = client.FetchAppState(ctx, appstate.WAPatchRegular, false, false)
+	_ = client.FetchAppState(ctx, appstate.WAPatchRegularHigh, false, false)
+	c.refreshDirectory(ctx)
 }
 
 func (c *Client) refreshDirectory(ctx context.Context) {

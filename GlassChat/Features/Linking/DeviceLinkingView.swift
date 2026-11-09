@@ -51,7 +51,7 @@ struct DeviceLinkingView: View {
                 Section("Discord token") {
                     SecureField("Bot token (recommended)", text: $discordToken)
                     Toggle("Bot token (ToS-safe)", isOn: $discordAsBot)
-                    Text("Open source: discordgo / DiscordKit. Unofficial user clients violate Discord ToS — prefer a bot token.")
+                    Text("Android mods (Aliucord/Vendetta/Revenge) patch the official Discord app. GlassChat’s closest API equivalent is a user token (risky, ToS). Prefer a bot token.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

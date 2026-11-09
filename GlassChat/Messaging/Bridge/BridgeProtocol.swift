@@ -8,6 +8,7 @@ enum BridgeMethod: String, Sendable {
     case messagesSendText = "messages.send.text"
     case chatsList = "chats.list"
     case messagesList = "messages.list"
+    case messagesMarkRead = "messages.markRead"
 }
 
 enum BridgeEvent: String, Sendable {

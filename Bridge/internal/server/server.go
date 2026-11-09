@@ -225,6 +225,14 @@ func (s *Server) dispatch(ctx context.Context, env protocol.Envelope) protocol.E
 		payload, _ := json.Marshal(map[string]string{"id": id})
 		return okResponse(env, payload)
 
+	case protocol.MethodMessagesMarkRead:
+		chatID := payloadString(env.Payload, "chatId")
+		if err := s.wa.MarkRead(ctx, chatID, nil); err != nil {
+			return errResponse(env, err.Error())
+		}
+		payload, _ := json.Marshal(map[string]bool{"ok": true})
+		return okResponse(env, payload)
+
 	default:
 		return errResponse(env, "unknown method")
 	}

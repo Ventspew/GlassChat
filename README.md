@@ -17,7 +17,7 @@ Not a WhatsApp Web wrapper — no Electron, Tauri, or WKWebView scraping.
 - Local Go bridge (bundled inside the `.app`)
 - GitHub Actions builds a downloadable `GlassChat-macOS.zip`
 
-See [Docs/OPEN_SOURCE_RESEARCH.md](Docs/OPEN_SOURCE_RESEARCH.md).
+See [Docs/OPEN_SOURCE_RESEARCH.md](Docs/OPEN_SOURCE_RESEARCH.md) and [Docs/BAN_AND_CLIENT_RESEARCH.md](Docs/BAN_AND_CLIENT_RESEARCH.md) (Watusi / whatRust / Aliucord — nothing is ban-proof; we apply Chrome companion DeviceProps hardening).
 
 ## Requirements
 

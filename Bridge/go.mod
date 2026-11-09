@@ -6,7 +6,7 @@ require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/google/uuid v1.6.0
 	github.com/gotd/td v0.163.0
-	go.mau.fi/whatsmeow v0.0.0-20261102152715-54038813c47f
+	go.mau.fi/whatsmeow v0.0.0-20261107160454-79dc2a8c33df
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.61.1
 )

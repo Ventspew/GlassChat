@@ -56,3 +56,5 @@ Each protocol keeps its own session store under Application Support. Chats are n
 - WhatsApp companion protocol: ban risk, breakage
 - Telegram: official API, safest of the three if using your own api_id
 - Discord user clients: ToS violation risk — bot path preferred
+
+Also see [BAN_AND_CLIENT_RESEARCH.md](BAN_AND_CLIENT_RESEARCH.md) for Watusi, whatRust, and Android Discord mods.

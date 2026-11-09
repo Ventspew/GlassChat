@@ -226,11 +226,18 @@ actor WhatsmeowMessagingService: MessagingService {
     }
 
     func markRead(chatID: ChatID) async throws {
-        // Local-only for now.
         if let index = conversations.firstIndex(where: { $0.id == chatID }) {
             conversations[index].unreadCount = 0
             publishConversations()
         }
+        guard let client else { return }
+        // Only WhatsApp JIDs go through whatsmeow mark-read.
+        let raw = chatID.rawValue
+        if raw.hasPrefix("tg:") || raw.hasPrefix("dc:") { return }
+        _ = try? await client.request(
+            method: .messagesMarkRead,
+            payload: ["chatId": .string(raw)]
+        )
     }
 
     func clearLocalData() async throws {

@@ -100,9 +100,20 @@ func (c *Client) Connect(ctxToken string, asBot bool) error {
 	}
 
 	c.setState("connecting", "")
+	// Android mods (Aliucord / Vendetta / Revenge) patch the official Discord app
+	// and keep a normal user session. For a standalone API client the closest
+	// equivalent is a raw user token (no "Bot " prefix). That violates Discord
+	// ToS — only enable when the user explicitly turns bot-mode off.
 	prefix := token
-	if asBot && len(token) > 4 && token[:4] != "Bot " {
-		prefix = "Bot " + token
+	if asBot {
+		if len(token) < 4 || token[:4] != "Bot " {
+			prefix = "Bot " + token
+		}
+	} else {
+		// Strip accidental Bot prefix for user-token mode.
+		if len(token) > 4 && token[:4] == "Bot " {
+			prefix = token[4:]
+		}
 	}
 
 	session, err := discordgo.New(prefix)
