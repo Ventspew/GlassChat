@@ -13,27 +13,16 @@ struct DeviceLinkingView: View {
 
     var body: some View {
         Form {
-            Section("Backend") {
-                Picker("Messaging backend", selection: Binding(
-                    get: { appState.backendKind },
-                    set: { appState.switchBackend($0) }
-                )) {
-                    ForEach(MessagingBackendKind.allCases) { kind in
-                        Text(kind.displayName).tag(kind)
-                    }
-                }
-                LabeledContent("Status", value: appState.connectionState.label)
+            Section("Status") {
+                LabeledContent("Backend", value: "Live bridge")
+                LabeledContent("Connection", value: appState.connectionState.label)
+                Text("Pick WhatsApp, Telegram, or Discord below. Sample/demo chats are not used.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if appState.backendKind == .mock {
-                    Text("Demo mode is only for UI testing. Use Live bridge to log in for real — sample chats are not your accounts.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Leave demo → Live bridge") {
+                    Button("Exit demo mode") {
                         appState.switchBackend(.whatsmeowBridge)
                     }
-                } else {
-                    Text("Pick a service below, then scan QR or paste a token. Demo sample chats are disabled.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 

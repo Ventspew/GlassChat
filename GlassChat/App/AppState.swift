@@ -185,12 +185,15 @@ final class AppState {
 
     private func migrateAwayFromDemoIfNeeded() {
         let defaults = UserDefaults.standard
-        let migratedKey = "glasschat.migratedLive.v1"
+        let migratedKey = "glasschat.migratedLive.v2"
         if !defaults.bool(forKey: migratedKey) {
-            // Force everyone off demo sample chats once.
+            // Force everyone off demo sample chats / washed themes.
             defaults.set(MessagingBackendKind.whatsmeowBridge.rawValue, forKey: "glasschat.backend")
-            defaults.set(true, forKey: migratedKey)
             defaults.set(false, forKey: "glasschat.allowDemo")
+            defaults.set(true, forKey: migratedKey)
+            defaults.set(true, forKey: "glasschat.theme.migratedHarbor.v1")
+            themeEngine.select(themeID: BuiltInThemes.harbor.id)
+            themeEngine.resetOverrides()
             needsFirstLogin = true
         }
 
