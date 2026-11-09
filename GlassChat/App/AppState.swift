@@ -18,7 +18,7 @@ final class AppState {
     private(set) var backendKind: MessagingBackendKind = .mock
     private(set) var protocolFilter: MessengerProtocol = .all
 
-    var translationService: any TranslationServicing = PreviewTranslationService()
+    var translationService: any TranslationServicing = CompositeTranslationService()
 
     private var mockService = MockMessagingService()
     private var whatsmeowService = WhatsmeowMessagingService()
@@ -117,7 +117,7 @@ final class AppState {
         telegramAPIID: String? = nil,
         telegramAPIHash: String? = nil,
         discordToken: String? = nil,
-        discordBot: Bool = true
+        discordBot: Bool = false
     ) async throws {
         backendKind = .whatsmeowBridge
         UserDefaults.standard.set(MessagingBackendKind.whatsmeowBridge.rawValue, forKey: "glasschat.backend")

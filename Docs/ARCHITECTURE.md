@@ -64,16 +64,16 @@ See in-app **Settings → Features** and `FeatureCatalog` in source.
 
 - Native SwiftUI shell (sidebar, chat, composer, settings)
 - Theme engine with five built-ins + live overrides
-- Composer translation preview
+- Send/receive translation (local phrase map + MyMemory network fallback)
 - Mock messaging backend with sample conversations
 - whatsmeow Go bridge with **QR pairing**, HistorySync chat list, text send/receive
-- Telegram via **gotd/td** (QR + dialogs)
-- Discord via **discordgo** (bot token)
+- Telegram via **gotd/td** (QR + dialogs + peer-cached send)
+- Discord via **discordgo** (user-token login for DMs/guilds; bot token optional)
 - Unified inbox with protocol filter (`wa` / `tg` / `dc`)
 
 ### Planned
 
-- Richer Telegram send path + full message history pagination
+- Telegram history pagination beyond live updates
 - Media, voice, reactions over the wire
 - Native notifications, full search
 

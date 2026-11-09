@@ -9,10 +9,10 @@ Not a WhatsApp Web wrapper — no Electron, Tauri, or WKWebView scraping.
 ## Features (0.3)
 
 - Native Messages-inspired UI + theme engine
-- On-device translation preview before send
+- Translate before send + translate incoming messages (local map + MyMemory)
 - **WhatsApp** via [whatsmeow](https://github.com/tulir/whatsmeow) (QR + history sync + chats) — inspired by [yawac](https://github.com/vadika/yawac)
 - **Telegram** via [gotd/td](https://github.com/gotd/td) (QR login; needs api_id/hash)
-- **Discord** via [discordgo](https://github.com/bwmarrin/discordgo) (bot token recommended)
+- **Discord** via [discordgo](https://github.com/bwmarrin/discordgo) (full user-token login; bot token optional)
 - Unified inbox with protocol filter
 - Local Go bridge (bundled inside the `.app`)
 - GitHub Actions builds a downloadable `GlassChat-macOS.zip`

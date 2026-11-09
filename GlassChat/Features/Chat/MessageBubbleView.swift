@@ -19,7 +19,7 @@ struct MessageBubbleView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(displayText)
+                Text(primaryText)
                     .font(.system(size: theme.bodyFontSize))
                     .foregroundStyle(isOutgoing ? theme.outgoingText : theme.incomingText)
                     .padding(.horizontal, 12)
@@ -30,9 +30,13 @@ struct MessageBubbleView: View {
                     )
                     .contextMenu {
                         Button("Copy") {
-                            if let text = message.body.plainText {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(primaryText, forType: .string)
+                        }
+                        if let translatedText, translatedText != displayText {
+                            Button("Copy original") {
                                 NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(text, forType: .string)
+                                NSPasteboard.general.setString(displayText, forType: .string)
                             }
                         }
                         Button("Reply") {}
@@ -41,8 +45,8 @@ struct MessageBubbleView: View {
                             .disabled(true)
                     }
 
-                if let translatedText, translatedText != displayText {
-                    Text(translatedText)
+                if let translatedText, translatedText != displayText, !isOutgoing {
+                    Text(displayText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
@@ -69,6 +73,14 @@ struct MessageBubbleView: View {
 
     private var displayText: String {
         message.body.plainText ?? "Unsupported message"
+    }
+
+    /// Incoming: show translation as primary when available. Outgoing: always original sent text.
+    private var primaryText: String {
+        if !isOutgoing, let translatedText, !translatedText.isEmpty {
+            return translatedText
+        }
+        return displayText
     }
 
     private var statusIcon: String {

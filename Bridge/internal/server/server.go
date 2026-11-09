@@ -140,7 +140,7 @@ func (s *Server) dispatch(ctx context.Context, env protocol.Envelope) protocol.E
 			}
 		case "discord":
 			token := payloadString(env.Payload, "token")
-			asBot := payloadBool(env.Payload, "bot", true)
+			asBot := payloadBool(env.Payload, "bot", false)
 			if token != "" {
 				s.dc.SetToken(token, asBot)
 			}

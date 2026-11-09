@@ -100,7 +100,7 @@ actor WhatsmeowMessagingService: MessagingService {
         telegramAPIID: String? = nil,
         telegramAPIHash: String? = nil,
         discordToken: String? = nil,
-        discordBot: Bool = true
+        discordBot: Bool = false
     ) async throws {
         setConnection(.awaitingPairing)
         latestQRCode = nil

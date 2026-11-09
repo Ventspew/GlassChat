@@ -49,7 +49,8 @@ struct ConversationView: View {
             return "\(conversation.participants.count) participants · Group"
         }
         let settings = translationPreferences.settings(for: conversation.id)
-        return "Target language: \(settings.targetLanguageCode.uppercased())"
+        let messenger = conversation.messenger.displayName
+        return "\(messenger) · send \(settings.targetLanguageCode.uppercased()) · read \(settings.incomingLanguageCode.uppercased())"
     }
 
     private var messageList: some View {
@@ -81,7 +82,7 @@ struct ConversationView: View {
     private var chatTranslationMenu: some View {
         if let chatID = appState.selectedChatID {
             let settings = translationPreferences.settings(for: chatID)
-            Picker("Target language", selection: Binding(
+            Picker("Send in", selection: Binding(
                 get: { settings.targetLanguageCode },
                 set: { code in
                     var updated = settings
@@ -95,7 +96,22 @@ struct ConversationView: View {
                 Text("French").tag("fr")
                 Text("Spanish").tag("es")
             }
-            Toggle("Auto-translate outgoing", isOn: Binding(
+            Picker("Read as", selection: Binding(
+                get: { settings.incomingLanguageCode },
+                set: { code in
+                    var updated = settings
+                    updated.incomingLanguageCode = code
+                    translationPreferences.update(updated, for: chatID)
+                    Task { await translateIncomingIfNeeded() }
+                }
+            )) {
+                Text("Dutch").tag("nl")
+                Text("English").tag("en")
+                Text("German").tag("de")
+                Text("French").tag("fr")
+                Text("Spanish").tag("es")
+            }
+            Toggle("Auto-translate before send", isOn: Binding(
                 get: { settings.autoTranslateOutgoing },
                 set: { value in
                     var updated = settings
@@ -103,7 +119,7 @@ struct ConversationView: View {
                     translationPreferences.update(updated, for: chatID)
                 }
             ))
-            Toggle("Translate incoming", isOn: Binding(
+            Toggle("Translate incoming messages", isOn: Binding(
                 get: { settings.translateIncoming },
                 set: { value in
                     var updated = settings
@@ -125,13 +141,13 @@ struct ConversationView: View {
 
         var results: [MessageID: String] = [:]
         for message in appState.messages where message.direction == .incoming {
-            guard let text = message.body.plainText else { continue }
+            guard let text = message.body.plainText, !text.isEmpty else { continue }
             do {
                 let translated = try await appState.translationService.translate(
                     TranslationRequest(
                         text: text,
                         sourceLanguageCode: nil,
-                        targetLanguageCode: settings.targetLanguageCode == "nl" ? "en" : "nl"
+                        targetLanguageCode: settings.incomingLanguageCode
                     )
                 )
                 if translated.translatedText != text {

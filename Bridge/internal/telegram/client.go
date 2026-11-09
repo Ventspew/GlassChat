@@ -3,10 +3,13 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
@@ -36,6 +39,10 @@ type MessageRecord struct {
 	FromMe     bool   `json:"fromMe"`
 }
 
+type peerRef struct {
+	peer tg.InputPeerClass
+}
+
 // Client is a gotd-backed Telegram adapter. Requires api_id + api_hash.
 type Client struct {
 	dataDir string
@@ -48,8 +55,11 @@ type Client struct {
 	label   string
 	chats   []ChatRecord
 	msgs    map[string][]MessageRecord
+	peers   map[string]peerRef
+	api     *tg.Client
 	running bool
 	cancel  context.CancelFunc
+	ready   chan struct{}
 }
 
 func New(dataDir string, sink EventSink) *Client {
@@ -58,6 +68,8 @@ func New(dataDir string, sink EventSink) *Client {
 		sink:    sink,
 		state:   "disconnected",
 		msgs:    map[string][]MessageRecord{},
+		peers:   map[string]peerRef{},
+		ready:   make(chan struct{}),
 	}
 }
 
@@ -72,6 +84,8 @@ func (c *Client) SetCredentials(apiID int, apiHash string) {
 	c.apiID = apiID
 	c.apiHash = apiHash
 	c.mu.Unlock()
+	_ = os.MkdirAll(c.dataDir, 0o700)
+	_ = os.WriteFile(filepath.Join(c.dataDir, "credentials.env"), []byte(fmt.Sprintf("%d\n%s\n", apiID, apiHash)), 0o600)
 }
 
 func (c *Client) HasCredentials() bool {
@@ -80,7 +94,6 @@ func (c *Client) HasCredentials() bool {
 	if c.apiID != 0 && c.apiHash != "" {
 		return true
 	}
-	// Fall back to environment (my.telegram.org credentials).
 	if id := os.Getenv("GLASSCHAT_TELEGRAM_API_ID"); id != "" {
 		if n, err := strconv.Atoi(id); err == nil {
 			c.apiID = n
@@ -88,6 +101,20 @@ func (c *Client) HasCredentials() bool {
 	}
 	if h := os.Getenv("GLASSCHAT_TELEGRAM_API_HASH"); h != "" {
 		c.apiHash = h
+	}
+	if c.apiID != 0 && c.apiHash != "" {
+		return true
+	}
+	// Load last saved credentials.
+	data, err := os.ReadFile(filepath.Join(c.dataDir, "credentials.env"))
+	if err == nil {
+		lines := strings.Split(string(data), "\n")
+		if len(lines) >= 2 {
+			if n, err := strconv.Atoi(strings.TrimSpace(lines[0])); err == nil {
+				c.apiID = n
+			}
+			c.apiHash = strings.TrimSpace(lines[1])
+		}
 	}
 	return c.apiID != 0 && c.apiHash != ""
 }
@@ -107,7 +134,7 @@ func (c *Client) setState(state, label string) {
 
 func (c *Client) StartPairing(ctx context.Context) error {
 	if !c.HasCredentials() {
-		return fmt.Errorf("Telegram api_id/api_hash missing — set in Settings or GLASSCHAT_TELEGRAM_API_ID/HASH (from my.telegram.org)")
+		return fmt.Errorf("Telegram api_id/api_hash missing — create an app at https://my.telegram.org and paste both values in Settings")
 	}
 	c.mu.Lock()
 	apiID, apiHash := c.apiID, c.apiHash
@@ -127,6 +154,7 @@ func (c *Client) StartPairing(ctx context.Context) error {
 	}
 	c.cancel = cancel
 	c.running = true
+	c.ready = make(chan struct{})
 	c.mu.Unlock()
 
 	go func() {
@@ -143,8 +171,7 @@ func (c *Client) StartPairing(ctx context.Context) error {
 			}
 			if !status.Authorized {
 				loggedIn := qrlogin.OnLoginToken(dispatcher)
-				auth, err := client.QR().Auth(ctx, loggedIn, func(ctx context.Context, token qrlogin.Token) error {
-					// Telegram QR payload is a tg:// URL shown as QR.
+				_, err := client.QR().Auth(ctx, loggedIn, func(ctx context.Context, token qrlogin.Token) error {
 					c.sink("session.pair.qr", map[string]any{
 						"code":     token.URL(),
 						"protocol": "telegram",
@@ -156,7 +183,6 @@ func (c *Client) StartPairing(ctx context.Context) error {
 					c.sink("session.pair.error", map[string]any{"detail": err.Error(), "protocol": "telegram"})
 					return err
 				}
-				_ = auth
 			}
 
 			self, err := client.Self(ctx)
@@ -167,6 +193,10 @@ func (c *Client) StartPairing(ctx context.Context) error {
 			if label == "" {
 				label = stringsJoin(self.FirstName, self.LastName)
 			}
+			api := client.API()
+			c.mu.Lock()
+			c.api = api
+			c.mu.Unlock()
 			c.setState("connected", label)
 			c.sink("session.pair.success", map[string]any{
 				"jid":          strconv.FormatInt(self.ID, 10),
@@ -174,10 +204,9 @@ func (c *Client) StartPairing(ctx context.Context) error {
 				"protocol":     "telegram",
 			})
 
-			api := client.API()
 			dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
 				OffsetPeer: &tg.InputPeerEmpty{},
-				Limit:      40,
+				Limit:      50,
 			})
 			if err == nil {
 				c.ingestDialogs(dialogs)
@@ -187,6 +216,16 @@ func (c *Client) StartPairing(ctx context.Context) error {
 				c.ingestUpdateMessage(e, u.Message)
 				return nil
 			})
+			dispatcher.OnNewChannelMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewChannelMessage) error {
+				c.ingestUpdateMessage(e, u.Message)
+				return nil
+			})
+
+			select {
+			case <-c.ready:
+			default:
+				close(c.ready)
+			}
 
 			<-ctx.Done()
 			return ctx.Err()
@@ -207,8 +246,10 @@ func (c *Client) Logout(ctx context.Context) error {
 		c.cancel = nil
 	}
 	c.running = false
+	c.api = nil
 	c.chats = nil
 	c.msgs = map[string][]MessageRecord{}
+	c.peers = map[string]peerRef{}
 	c.mu.Unlock()
 	_ = os.Remove(filepath.Join(c.dataDir, "telegram.session"))
 	c.setState("disconnected", "")
@@ -225,80 +266,166 @@ func (c *Client) ListChats() []ChatRecord {
 
 func (c *Client) ListMessages(chatID string) []MessageRecord {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]MessageRecord{}, c.msgs[chatID]...)
+	api := c.api
+	ref, ok := c.peers[chatID]
+	cached := append([]MessageRecord{}, c.msgs[chatID]...)
+	c.mu.Unlock()
+
+	if api == nil || !ok || ref.peer == nil {
+		return cached
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	history, err := api.MessagesGetHistory(ctx, &tg.MessagesGetHistoryRequest{
+		Peer:  ref.peer,
+		Limit: 50,
+	})
+	if err != nil {
+		return cached
+	}
+
+	var messages []tg.MessageClass
+	switch h := history.(type) {
+	case *tg.MessagesMessages:
+		messages = h.Messages
+	case *tg.MessagesMessagesSlice:
+		messages = h.Messages
+	case *tg.MessagesChannelMessages:
+		messages = h.Messages
+	default:
+		return cached
+	}
+
+	out := make([]MessageRecord, 0, len(messages))
+	// API returns newest-first; reverse for chronological UI.
+	for i := len(messages) - 1; i >= 0; i-- {
+		m, ok := messages[i].(*tg.Message)
+		if !ok || m.Message == "" {
+			continue
+		}
+		sender := "Telegram"
+		if m.Out {
+			sender = "You"
+		}
+		out = append(out, MessageRecord{
+			ID: strconv.Itoa(m.ID), ChatID: chatID, SenderName: sender,
+			Text: m.Message, Timestamp: int64(m.Date), FromMe: m.Out,
+		})
+	}
+	if len(out) == 0 {
+		return cached
+	}
+	c.mu.Lock()
+	c.msgs[chatID] = out
+	c.mu.Unlock()
+	return out
 }
 
 func (c *Client) SendText(ctx context.Context, chatID, text string) (string, error) {
-	return "", fmt.Errorf("telegram send requires an active gotd session — reconnect after pairing")
+	c.mu.Lock()
+	api := c.api
+	ref, ok := c.peers[chatID]
+	c.mu.Unlock()
+	if api == nil {
+		return "", fmt.Errorf("telegram not connected — scan the QR code first")
+	}
+	if !ok || ref.peer == nil {
+		return "", fmt.Errorf("unknown telegram chat %s — open it from the synced chat list", chatID)
+	}
+
+	randomID := rand.New(rand.NewSource(time.Now().UnixNano())).Int63()
+	updates, err := api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{
+		Peer:     ref.peer,
+		Message:  text,
+		RandomID: randomID,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	id := fmt.Sprintf("%d", randomID)
+	switch u := updates.(type) {
+	case *tg.Updates:
+		for _, up := range u.Updates {
+			if m, ok := up.(*tg.UpdateMessageID); ok {
+				id = strconv.Itoa(m.ID)
+			}
+		}
+	case *tg.UpdateShortSentMessage:
+		id = strconv.Itoa(u.ID)
+	}
+
+	rec := MessageRecord{
+		ID: id, ChatID: chatID, SenderName: "You", Text: text,
+		Timestamp: time.Now().Unix(), FromMe: true,
+	}
+	c.mu.Lock()
+	c.msgs[chatID] = append(c.msgs[chatID], rec)
+	c.mu.Unlock()
+	c.sink("messages.event", map[string]any{
+		"id": rec.ID, "chatId": chatID, "senderName": "You",
+		"text": text, "timestamp": rec.Timestamp, "fromMe": true, "protocol": "telegram",
+	})
+	return id, nil
 }
 
 func (c *Client) ingestDialogs(raw tg.MessagesDialogsClass) {
 	var chats []ChatRecord
-	switch d := raw.(type) {
-	case *tg.MessagesDialogs:
-		users := map[int64]*tg.User{}
-		for _, u := range d.Users {
-			if user, ok := u.(*tg.User); ok {
-				users[user.ID] = user
-			}
-		}
-		chatMap := map[int64]tg.ChatClass{}
-		for _, ch := range d.Chats {
-			switch t := ch.(type) {
-			case *tg.Chat:
-				chatMap[t.ID] = t
-			case *tg.Channel:
-				chatMap[t.ID] = t
-			}
-		}
-		for _, dlg := range d.Dialogs {
+	peers := map[string]peerRef{}
+
+	handle := func(dialogs []tg.DialogClass, users map[int64]*tg.User, chatMap map[int64]tg.ChatClass) {
+		for _, dlg := range dialogs {
 			dialog, ok := dlg.(*tg.Dialog)
 			if !ok {
 				continue
 			}
-			id, title, kind := peerMeta(dialog.Peer, users, chatMap)
-			if id == "" {
+			id, title, kind, peer := peerMeta(dialog.Peer, users, chatMap)
+			if id == "" || peer == nil {
 				continue
 			}
-			chats = append(chats, ChatRecord{
-				ID: id, Title: title, Kind: kind, Protocol: "telegram",
-			})
-		}
-	case *tg.MessagesDialogsSlice:
-		users := map[int64]*tg.User{}
-		for _, u := range d.Users {
-			if user, ok := u.(*tg.User); ok {
-				users[user.ID] = user
-			}
-		}
-		chatMap := map[int64]tg.ChatClass{}
-		for _, ch := range d.Chats {
-			switch t := ch.(type) {
-			case *tg.Chat:
-				chatMap[t.ID] = t
-			case *tg.Channel:
-				chatMap[t.ID] = t
-			}
-		}
-		for _, dlg := range d.Dialogs {
-			dialog, ok := dlg.(*tg.Dialog)
-			if !ok {
-				continue
-			}
-			id, title, kind := peerMeta(dialog.Peer, users, chatMap)
-			if id == "" {
-				continue
-			}
+			peers[id] = peerRef{peer: peer}
 			chats = append(chats, ChatRecord{
 				ID: id, Title: title, Kind: kind, Protocol: "telegram",
 			})
 		}
 	}
+
+	switch d := raw.(type) {
+	case *tg.MessagesDialogs:
+		users, chatMap := indexEntities(d.Users, d.Chats)
+		handle(d.Dialogs, users, chatMap)
+	case *tg.MessagesDialogsSlice:
+		users, chatMap := indexEntities(d.Users, d.Chats)
+		handle(d.Dialogs, users, chatMap)
+	}
+
 	c.mu.Lock()
 	c.chats = chats
+	for k, v := range peers {
+		c.peers[k] = v
+	}
 	c.mu.Unlock()
 	c.sink("chats.updated", map[string]any{"protocol": "telegram", "chats": chats})
+}
+
+func indexEntities(usersIn []tg.UserClass, chatsIn []tg.ChatClass) (map[int64]*tg.User, map[int64]tg.ChatClass) {
+	users := map[int64]*tg.User{}
+	for _, u := range usersIn {
+		if user, ok := u.(*tg.User); ok {
+			users[user.ID] = user
+		}
+	}
+	chatMap := map[int64]tg.ChatClass{}
+	for _, ch := range chatsIn {
+		switch t := ch.(type) {
+		case *tg.Chat:
+			chatMap[t.ID] = t
+		case *tg.Channel:
+			chatMap[t.ID] = t
+		}
+	}
+	return users, chatMap
 }
 
 func (c *Client) ingestUpdateMessage(e tg.Entities, msg tg.MessageClass) {
@@ -306,34 +433,49 @@ func (c *Client) ingestUpdateMessage(e tg.Entities, msg tg.MessageClass) {
 	if !ok || m.Message == "" {
 		return
 	}
-	chatID := fmt.Sprintf("%d", m.PeerID)
-	// Prefer concrete peer ids when available.
+	chatID := ""
 	switch p := m.PeerID.(type) {
 	case *tg.PeerUser:
 		chatID = fmt.Sprintf("tg:user:%d", p.UserID)
+		if u, ok := e.Users[p.UserID]; ok {
+			c.mu.Lock()
+			c.peers[chatID] = peerRef{peer: &tg.InputPeerUser{UserID: u.ID, AccessHash: u.AccessHash}}
+			c.mu.Unlock()
+		}
 	case *tg.PeerChat:
 		chatID = fmt.Sprintf("tg:chat:%d", p.ChatID)
+		c.mu.Lock()
+		c.peers[chatID] = peerRef{peer: &tg.InputPeerChat{ChatID: p.ChatID}}
+		c.mu.Unlock()
 	case *tg.PeerChannel:
 		chatID = fmt.Sprintf("tg:channel:%d", p.ChannelID)
+		if ch, ok := e.Channels[p.ChannelID]; ok {
+			c.mu.Lock()
+			c.peers[chatID] = peerRef{peer: &tg.InputPeerChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}}
+			c.mu.Unlock()
+		}
+	}
+	if chatID == "" {
+		return
+	}
+	sender := "Telegram"
+	if m.Out {
+		sender = "You"
 	}
 	rec := MessageRecord{
-		ID:         strconv.Itoa(m.ID),
-		ChatID:     chatID,
-		SenderName: "Telegram",
-		Text:       m.Message,
-		Timestamp:  int64(m.Date),
-		FromMe:     m.Out,
+		ID: strconv.Itoa(m.ID), ChatID: chatID, SenderName: sender,
+		Text: m.Message, Timestamp: int64(m.Date), FromMe: m.Out,
 	}
 	c.mu.Lock()
 	c.msgs[chatID] = append(c.msgs[chatID], rec)
 	c.mu.Unlock()
 	c.sink("messages.event", map[string]any{
-		"id": rec.ID, "chatId": rec.ChatID, "senderName": rec.SenderName,
-		"text": rec.Text, "timestamp": rec.Timestamp, "fromMe": rec.FromMe, "protocol": "telegram",
+		"id": rec.ID, "chatId": chatID, "senderName": sender,
+		"text": rec.Text, "timestamp": rec.Timestamp, "fromMe": m.Out, "protocol": "telegram",
 	})
 }
 
-func peerMeta(peer tg.PeerClass, users map[int64]*tg.User, chats map[int64]tg.ChatClass) (id, title, kind string) {
+func peerMeta(peer tg.PeerClass, users map[int64]*tg.User, chats map[int64]tg.ChatClass) (id, title, kind string, input tg.InputPeerClass) {
 	switch p := peer.(type) {
 	case *tg.PeerUser:
 		id = fmt.Sprintf("tg:user:%d", p.UserID)
@@ -343,10 +485,12 @@ func peerMeta(peer tg.PeerClass, users map[int64]*tg.User, chats map[int64]tg.Ch
 			if title == "" {
 				title = u.Username
 			}
+			input = &tg.InputPeerUser{UserID: u.ID, AccessHash: u.AccessHash}
 		}
 	case *tg.PeerChat:
 		id = fmt.Sprintf("tg:chat:%d", p.ChatID)
 		kind = "group"
+		input = &tg.InputPeerChat{ChatID: p.ChatID}
 		if ch, ok := chats[p.ChatID].(*tg.Chat); ok {
 			title = ch.Title
 		}
@@ -355,6 +499,7 @@ func peerMeta(peer tg.PeerClass, users map[int64]*tg.User, chats map[int64]tg.Ch
 		kind = "group"
 		if ch, ok := chats[p.ChannelID].(*tg.Channel); ok {
 			title = ch.Title
+			input = &tg.InputPeerChannel{ChannelID: ch.ID, AccessHash: ch.AccessHash}
 		}
 	}
 	if title == "" {

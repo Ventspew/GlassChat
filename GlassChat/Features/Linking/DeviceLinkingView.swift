@@ -9,7 +9,7 @@ struct DeviceLinkingView: View {
     @State private var telegramAPIID = ""
     @State private var telegramAPIHash = ""
     @State private var discordToken = ""
-    @State private var discordAsBot = true
+    @State private var discordAsBot = false
 
     var body: some View {
         Form {
@@ -48,10 +48,12 @@ struct DeviceLinkingView: View {
             }
 
             if selectedProtocol == .discord {
-                Section("Discord token") {
-                    SecureField("Bot token (recommended)", text: $discordToken)
-                    Toggle("Bot token (ToS-safe)", isOn: $discordAsBot)
-                    Text("Android mods (Aliucord/Vendetta/Revenge) patch the official Discord app. GlassChat’s closest API equivalent is a user token (risky, ToS). Prefer a bot token.")
+                Section("Discord login") {
+                    SecureField("Account token (user login)", text: $discordToken)
+                    Toggle("Use bot token instead", isOn: $discordAsBot)
+                    Text(discordAsBot
+                         ? "Paste a bot token from the Discord Developer Portal. Invite the bot to your servers and enable Message Content Intent."
+                         : "Paste your Discord user token for full personal login (DMs + servers), same idea as Aliucord/Vendetta. Against Discord ToS — account risk.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -124,7 +126,7 @@ struct DeviceLinkingView: View {
         case .telegram:
             return "Scan in Telegram → Settings → Devices → Link Desktop Device."
         case .discord:
-            return "Connect with a bot token from the Discord Developer Portal."
+            return "Full login with your Discord user token (DMs + guild channels). Bot token optional."
         case .all:
             return ""
         }
