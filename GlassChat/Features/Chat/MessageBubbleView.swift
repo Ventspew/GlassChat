@@ -45,14 +45,14 @@ struct MessageBubbleView: View {
                             .disabled(true)
                     }
 
-                if let translatedText, translatedText != displayText, !isOutgoing {
-                    Text(displayText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                }
-
                 HStack(spacing: 4) {
+                    if let translatedText, translatedText != displayText, !isOutgoing {
+                        Text("translated")
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15), in: Capsule())
+                    }
+
                     Text(message.timestamp, style: .time)
                     if isOutgoing {
                         Image(systemName: statusIcon)

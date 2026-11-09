@@ -2,12 +2,35 @@ import Foundation
 
 enum BuiltInThemes {
     static let all: [Theme] = [
+        harbor,
         appleMessages,
         whatsAppClassic,
         minimal,
         midnight,
         liquidGlass
     ]
+
+    /// Default: slate sidebar + cool chat plane — not flat white.
+    static let harbor = Theme(
+        id: "harbor",
+        name: "Harbor",
+        preferredColorScheme: .light,
+        accentHex: "1F7A8C",
+        outgoingBubbleHex: "1F7A8C",
+        incomingBubbleHex: "F4F7F8",
+        outgoingTextHex: "FFFFFF",
+        incomingTextHex: "15202B",
+        chatBackgroundHex: "C9D6DF",
+        sidebarBackgroundHex: "243447",
+        sidebarSelectionHex: "2F455C",
+        composerBackgroundHex: "F7FAFB",
+        bodyFontSize: 14,
+        messageSpacing: 7,
+        bubbleCornerRadius: 16,
+        conversationDensity: .comfortable,
+        sidebarOpacity: 1.0,
+        usesMaterialBackground: false
+    )
 
     static let appleMessages = Theme(
         id: "apple-messages",
@@ -18,8 +41,8 @@ enum BuiltInThemes {
         incomingBubbleHex: "E5E5EA",
         outgoingTextHex: "FFFFFF",
         incomingTextHex: "000000",
-        chatBackgroundHex: "F2F2F7",
-        sidebarBackgroundHex: "F5F5F7",
+        chatBackgroundHex: "E8E8ED",
+        sidebarBackgroundHex: "ECECF0",
         sidebarSelectionHex: "D6E4FF",
         composerBackgroundHex: "FFFFFF",
         bodyFontSize: 14,
@@ -97,24 +120,24 @@ enum BuiltInThemes {
         id: "liquid-glass",
         name: "Liquid Glass",
         preferredColorScheme: .system,
-        accentHex: "0A84FF",
-        outgoingBubbleHex: "0A84FF",
+        accentHex: "1F7A8C",
+        outgoingBubbleHex: "1F7A8C",
         incomingBubbleHex: "FFFFFF",
         outgoingTextHex: "FFFFFF",
         incomingTextHex: "1C1C1E",
-        chatBackgroundHex: "EAF2FA",
-        sidebarBackgroundHex: "F4F7FB",
-        sidebarSelectionHex: "D7E8FF",
-        composerBackgroundHex: "FFFFFF",
+        chatBackgroundHex: "B9CBD6",
+        sidebarBackgroundHex: "2A3B4C",
+        sidebarSelectionHex: "3A5166",
+        composerBackgroundHex: "F4F8FA",
         bodyFontSize: 14,
         messageSpacing: 7,
         bubbleCornerRadius: 18,
         conversationDensity: .comfortable,
-        sidebarOpacity: 0.98,
-        usesMaterialBackground: true
+        sidebarOpacity: 1.0,
+        usesMaterialBackground: false
     )
 
     static func theme(id: String) -> Theme {
-        all.first(where: { $0.id == id }) ?? appleMessages
+        all.first(where: { $0.id == id }) ?? harbor
     }
 }

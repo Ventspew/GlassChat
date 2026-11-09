@@ -3,6 +3,7 @@ import SwiftUI
 struct ConversationRowView: View {
     @Environment(\.chatTheme) private var theme
     let conversation: Conversation
+    var onDarkSidebar: Bool = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -12,23 +13,24 @@ struct ConversationRowView: View {
                 HStack {
                     Text(conversation.title)
                         .font(.system(size: theme.bodyFontSize, weight: .semibold))
+                        .foregroundStyle(onDarkSidebar ? Color.white.opacity(0.95) : Color.primary)
                         .lineLimit(1)
                     Text(conversation.messenger.displayName)
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(theme.accent.opacity(0.12), in: Capsule())
-                        .foregroundStyle(theme.accent)
+                        .background(theme.accent.opacity(onDarkSidebar ? 0.28 : 0.12), in: Capsule())
+                        .foregroundStyle(onDarkSidebar ? Color.white : theme.accent)
                     Spacer(minLength: 4)
                     Text(conversation.lastActivity, style: .time)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(onDarkSidebar ? Color.white.opacity(0.55) : Color.secondary)
                 }
 
                 HStack(alignment: .firstTextBaseline) {
                     Text(conversation.lastMessagePreview)
                         .font(.system(size: theme.bodyFontSize - 1))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(onDarkSidebar ? Color.white.opacity(0.6) : Color.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     if conversation.unreadCount > 0 {

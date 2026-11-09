@@ -7,18 +7,31 @@ import SwiftUI
 final class ThemeEngine {
     private static let storageKey = "glasschat.theme.id"
     private static let customOverridesKey = "glasschat.theme.overrides"
+    private static let migratedHarborKey = "glasschat.theme.migratedHarbor.v1"
 
     private(set) var current: Theme
     var availableThemes: [Theme] { BuiltInThemes.all }
 
     init() {
+        Self.migrateWashedThemesIfNeeded()
         let savedID = UserDefaults.standard.string(forKey: Self.storageKey)
-        var theme = BuiltInThemes.theme(id: savedID ?? BuiltInThemes.appleMessages.id)
+        var theme = BuiltInThemes.theme(id: savedID ?? BuiltInThemes.harbor.id)
         if let data = UserDefaults.standard.data(forKey: Self.customOverridesKey),
            let overrides = try? JSONDecoder().decode(ThemeOverrides.self, from: data) {
             theme = overrides.apply(to: theme)
         }
         self.current = theme
+    }
+
+    /// One-time bump away from washed flat-white defaults.
+    private static func migrateWashedThemesIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: migratedHarborKey) else { return }
+        let current = UserDefaults.standard.string(forKey: storageKey)
+        if current == nil || current == "apple-messages" || current == "liquid-glass" || current == "minimal" {
+            UserDefaults.standard.set(BuiltInThemes.harbor.id, forKey: storageKey)
+            UserDefaults.standard.removeObject(forKey: customOverridesKey)
+        }
+        UserDefaults.standard.set(true, forKey: migratedHarborKey)
     }
 
     func select(themeID: String) {
@@ -94,7 +107,7 @@ struct ThemeOverrides: Codable, Sendable {
 }
 
 private struct ThemeKey: EnvironmentKey {
-    static let defaultValue = BuiltInThemes.appleMessages
+    static let defaultValue = BuiltInThemes.harbor
 }
 
 extension EnvironmentValues {

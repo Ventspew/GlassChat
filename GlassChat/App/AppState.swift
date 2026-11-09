@@ -15,8 +15,9 @@ final class AppState {
     private(set) var selectedChatID: ChatID?
     private(set) var searchText: String = ""
     private(set) var sidebarWidth: Double = 280
-    private(set) var backendKind: MessagingBackendKind = .mock
+    private(set) var backendKind: MessagingBackendKind = .whatsmeowBridge
     private(set) var protocolFilter: MessengerProtocol = .all
+    private(set) var needsFirstLogin = false
 
     var translationService: any TranslationServicing = CompositeTranslationService()
 
@@ -43,8 +44,16 @@ final class AppState {
         conversations.first(where: { $0.id == selectedChatID })
     }
 
+    var isLiveBackend: Bool { backendKind == .whatsmeowBridge }
+
+    var hasLinkedChats: Bool { !conversations.isEmpty }
+
     init() {
+        migrateAwayFromDemoIfNeeded()
         startObserving()
+        if backendKind == .whatsmeowBridge {
+            Task { try? await whatsmeowService.startBridgeAndConnect() }
+        }
     }
 
     func selectChat(_ id: ChatID?) {
@@ -100,6 +109,11 @@ final class AppState {
     func switchBackend(_ kind: MessagingBackendKind) {
         backendKind = kind
         UserDefaults.standard.set(kind.rawValue, forKey: "glasschat.backend")
+        if kind == .mock {
+            UserDefaults.standard.set(true, forKey: "glasschat.allowDemo")
+        }
+        selectedChatID = nil
+        messages = []
         startObserving()
         if kind == .whatsmeowBridge {
             Task {
@@ -149,6 +163,8 @@ final class AppState {
         if backendKind == .mock {
             await mockService.resetToSampleData()
         }
+        selectedChatID = nil
+        messages = []
     }
 
     func restoreSidebarWidth() {
@@ -156,14 +172,38 @@ final class AppState {
         if stored >= 220 {
             sidebarWidth = stored
         }
-        if let backend = UserDefaults.standard.string(forKey: "glasschat.backend"),
-           let kind = MessagingBackendKind(rawValue: backend) {
-            backendKind = kind
-            startObserving()
-        }
         if let filter = UserDefaults.standard.string(forKey: "glasschat.protocolFilter"),
            let kind = MessengerProtocol(rawValue: filter) {
             protocolFilter = kind
+        }
+        needsFirstLogin = isLiveBackend && !hasLinkedChats
+    }
+
+    func consumeFirstLoginPrompt() {
+        needsFirstLogin = false
+    }
+
+    private func migrateAwayFromDemoIfNeeded() {
+        let defaults = UserDefaults.standard
+        let migratedKey = "glasschat.migratedLive.v1"
+        if !defaults.bool(forKey: migratedKey) {
+            // Force everyone off demo sample chats once.
+            defaults.set(MessagingBackendKind.whatsmeowBridge.rawValue, forKey: "glasschat.backend")
+            defaults.set(true, forKey: migratedKey)
+            defaults.set(false, forKey: "glasschat.allowDemo")
+            needsFirstLogin = true
+        }
+
+        if let backend = defaults.string(forKey: "glasschat.backend"),
+           let kind = MessagingBackendKind(rawValue: backend) {
+            if kind == .mock && !defaults.bool(forKey: "glasschat.allowDemo") {
+                backendKind = .whatsmeowBridge
+                defaults.set(MessagingBackendKind.whatsmeowBridge.rawValue, forKey: "glasschat.backend")
+            } else {
+                backendKind = kind
+            }
+        } else {
+            backendKind = .whatsmeowBridge
         }
     }
 
@@ -177,11 +217,15 @@ final class AppState {
             for await list in stream {
                 guard !Task.isCancelled else { break }
                 conversations = list
-                if selectedChatID == nil {
-                    selectChat(list.first?.id)
+                if list.isEmpty {
+                    selectedChatID = nil
+                    messages = []
+                } else if selectedChatID == nil {
+                    // Don't auto-open a chat on empty→first sync; wait for user pick.
                 } else if let selectedChatID, !list.contains(where: { $0.id == selectedChatID }) {
                     selectChat(list.first?.id)
                 }
+                needsFirstLogin = backendKind == .whatsmeowBridge && list.isEmpty
             }
         }
 

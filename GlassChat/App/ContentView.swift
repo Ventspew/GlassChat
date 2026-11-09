@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -10,7 +11,7 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(showSettings: $showSettings, settingsTab: $settingsTab)
                 .navigationSplitViewColumnWidth(
-                    min: 240,
+                    min: 260,
                     ideal: appState.sidebarWidth,
                     max: 420
                 )
@@ -28,6 +29,13 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             settingsSheet
         }
+        .onAppear {
+            if appState.needsFirstLogin || !appState.hasLinkedChats {
+                settingsTab = .connection
+                showSettings = true
+                appState.consumeFirstLoginPrompt()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openGlassChatSettings)) { note in
             if let tab = note.object as? SettingsTab {
                 settingsTab = tab
@@ -39,45 +47,67 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image("BrandMark")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 72, height: 72)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+        ZStack {
+            LinearGradient(
+                colors: [
+                    themeEngine.current.chatBackground,
+                    themeEngine.current.accent.opacity(0.18),
+                    themeEngine.current.sidebarBackground.opacity(0.35)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            Text("GlassChat")
-                .font(.system(.largeTitle, design: .rounded).weight(.bold))
+            VStack(spacing: 18) {
+                Group {
+                    if let icon = NSApplication.shared.applicationIconImage {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        Image("BrandMark")
+                            .resizable()
+                            .scaledToFit()
+                    }
+                }
+                .frame(width: 88, height: 88)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
 
-            Text(appState.backendKind == .mock
-                 ? "Demo mode is active. Connect WhatsApp, Telegram, or Discord to use real chats."
-                 : "Select a chat, or open Connection to link another account.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+                Text("GlassChat")
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
 
-            Button {
-                settingsTab = .connection
-                showSettings = true
-            } label: {
-                Label("Log in / Connection", systemImage: "person.badge.key.fill")
+                Text("No sample chats. Connect WhatsApp, Telegram, or Discord to start messaging — with translation on send and receive.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+
+                Button {
+                    settingsTab = .connection
+                    showSettings = true
+                } label: {
+                    Label("Log in", systemImage: "person.badge.key.fill")
+                        .frame(minWidth: 160)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .padding(32)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var settingsSheet: some View {
         VStack(spacing: 0) {
             HStack {
-                Image("BrandMark")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                if let icon = NSApplication.shared.applicationIconImage {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 22, height: 22)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
                 Text("GlassChat Settings")
                     .font(.headline)
                 Spacer()
@@ -91,28 +121,10 @@ struct ContentView: View {
             SettingsView(selectedTab: $settingsTab)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 620, height: 560)
+        .frame(width: 640, height: 580)
     }
 
-    @ViewBuilder
     private var themeBackground: some View {
-        let theme = themeEngine.current
-        if theme.usesMaterialBackground {
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        theme.chatBackground.opacity(0.95),
-                        theme.accent.opacity(0.12),
-                        theme.chatBackground
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                Rectangle().fill(.thinMaterial)
-            }
-            .ignoresSafeArea()
-        } else {
-            theme.chatBackground.ignoresSafeArea()
-        }
+        themeEngine.current.chatBackground.ignoresSafeArea()
     }
 }

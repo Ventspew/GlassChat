@@ -14,7 +14,20 @@ struct ConversationView: View {
             messageList
             ComposerView()
         }
-        .background(themeEngine.current.chatBackground.opacity(themeEngine.current.usesMaterialBackground ? 0.35 : 1))
+        .background(
+            ZStack {
+                themeEngine.current.chatBackground
+                LinearGradient(
+                    colors: [
+                        themeEngine.current.accent.opacity(0.08),
+                        .clear,
+                        themeEngine.current.sidebarBackground.opacity(0.08)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+        )
         .task(id: appState.selectedChatID) {
             await translateIncomingIfNeeded()
         }

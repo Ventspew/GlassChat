@@ -26,7 +26,7 @@ final class ThemeEngineCoreTests: XCTestCase {
         engine.updateBubbleCornerRadius(20)
         XCTAssertEqual(engine.current.id, "midnight")
         XCTAssertEqual(engine.current.bubbleCornerRadius, 20)
-        XCTAssertEqual(BuiltInThemes.all.count, 5)
+        XCTAssertEqual(BuiltInThemes.all.count, 6)
     }
 }
 

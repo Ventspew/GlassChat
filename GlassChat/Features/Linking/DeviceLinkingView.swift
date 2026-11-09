@@ -24,12 +24,16 @@ struct DeviceLinkingView: View {
                 }
                 LabeledContent("Status", value: appState.connectionState.label)
                 if appState.backendKind == .mock {
-                    Text("Demo mode shows sample chats only. Switch to “WhatsApp Bridge” (local Go helper) to log in for real.")
+                    Text("Demo mode is only for UI testing. Use Live bridge to log in for real — sample chats are not your accounts.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button("Switch to live bridge") {
+                    Button("Leave demo → Live bridge") {
                         appState.switchBackend(.whatsmeowBridge)
                     }
+                } else {
+                    Text("Pick a service below, then scan QR or paste a token. Demo sample chats are disabled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 

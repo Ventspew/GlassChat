@@ -32,6 +32,6 @@ final class ThemeEngineTests: XCTestCase {
     }
 
     func testBuiltInCount() {
-        XCTAssertEqual(BuiltInThemes.all.count, 5)
+        XCTAssertEqual(BuiltInThemes.all.count, 6)
     }
 }
