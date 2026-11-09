@@ -20,9 +20,9 @@ enum MessagingBackendKind: String, CaseIterable, Identifiable, Sendable {
     var displayName: String {
         switch self {
         case .mock:
-            return "Mock (local sample data)"
+            return "Demo (sample chats)"
         case .whatsmeowBridge:
-            return "WhatsApp (QR linked device)"
+            return "Live bridge (WhatsApp / Telegram / Discord)"
         }
     }
 }

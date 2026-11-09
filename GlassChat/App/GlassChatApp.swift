@@ -25,11 +25,21 @@ struct GlassChatApp: App {
                 }
                 .keyboardShortcut("n", modifiers: [.command])
             }
+            CommandGroup(after: .appSettings) {
+                Button("Connection / Log in…") {
+                    NotificationCenter.default.post(name: .openGlassChatSettings, object: SettingsTab.connection)
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+            }
             CommandMenu("Chat") {
                 Button("Find in Conversations") {
                     NotificationCenter.default.post(name: .focusConversationSearch, object: nil)
                 }
                 .keyboardShortcut("f", modifiers: [.command])
+                Button("Settings…") {
+                    NotificationCenter.default.post(name: .openGlassChatSettings, object: SettingsTab.appearance)
+                }
+                .keyboardShortcut(",", modifiers: [.command])
             }
         }
 
@@ -39,7 +49,7 @@ struct GlassChatApp: App {
                 .environment(appState.themeEngine)
                 .environment(appState.translationPreferences)
                 .environment(\.chatTheme, appState.themeEngine.current)
-                .frame(width: 560, height: 480)
+                .frame(width: 620, height: 560)
         }
     }
 
@@ -52,4 +62,5 @@ struct GlassChatApp: App {
 
 extension Notification.Name {
     static let focusConversationSearch = Notification.Name("glasschat.focusConversationSearch")
+    static let openGlassChatSettings = Notification.Name("glasschat.openSettings")
 }

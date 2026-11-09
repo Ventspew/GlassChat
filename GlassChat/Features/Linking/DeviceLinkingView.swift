@@ -23,6 +23,14 @@ struct DeviceLinkingView: View {
                     }
                 }
                 LabeledContent("Status", value: appState.connectionState.label)
+                if appState.backendKind == .mock {
+                    Text("Demo mode shows sample chats only. Switch to “WhatsApp Bridge” (local Go helper) to log in for real.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Switch to live bridge") {
+                        appState.switchBackend(.whatsmeowBridge)
+                    }
+                }
             }
 
             Section("Protocol") {

@@ -1,22 +1,33 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Binding var selectedTab: SettingsTab
+
+    init(selectedTab: Binding<SettingsTab> = .constant(.connection)) {
+        _selectedTab = selectedTab
+    }
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             AppearanceSettingsView()
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+                .tabItem { Label(SettingsTab.appearance.title, systemImage: SettingsTab.appearance.systemImage) }
+                .tag(SettingsTab.appearance)
 
             TranslationSettingsView()
-                .tabItem { Label("Translation", systemImage: "globe") }
+                .tabItem { Label(SettingsTab.translation.title, systemImage: SettingsTab.translation.systemImage) }
+                .tag(SettingsTab.translation)
 
             PrivacySettingsView()
-                .tabItem { Label("Privacy", systemImage: "lock.shield") }
+                .tabItem { Label(SettingsTab.privacy.title, systemImage: SettingsTab.privacy.systemImage) }
+                .tag(SettingsTab.privacy)
 
             DeviceLinkingView()
-                .tabItem { Label("Connection", systemImage: "qrcode") }
+                .tabItem { Label(SettingsTab.connection.title, systemImage: SettingsTab.connection.systemImage) }
+                .tag(SettingsTab.connection)
 
             FeatureMatrixView()
-                .tabItem { Label("Features", systemImage: "checklist") }
+                .tabItem { Label(SettingsTab.features.title, systemImage: SettingsTab.features.systemImage) }
+                .tag(SettingsTab.features)
         }
         .padding()
     }
