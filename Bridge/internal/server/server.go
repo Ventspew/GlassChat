@@ -4,24 +4,27 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
+	"github.com/glasschat/bridge/internal/discord"
 	"github.com/glasschat/bridge/internal/protocol"
+	"github.com/glasschat/bridge/internal/telegram"
 	"github.com/glasschat/bridge/internal/wa"
 	"github.com/google/uuid"
 )
 
-// Server speaks NDJSON over a Unix domain socket and hosts whatsmeow.
 type Server struct {
 	SocketPath string
 	Token      string
 	DataDir    string
 
 	wa *wa.Client
+	tg *telegram.Client
+	dc *discord.Client
 
 	mu          sync.Mutex
 	subscribers map[net.Conn]struct{}
@@ -34,7 +37,9 @@ func New(socketPath, token, dataDir string) *Server {
 		DataDir:     dataDir,
 		subscribers: map[net.Conn]struct{}{},
 	}
-	s.wa = wa.New(dataDir, s.broadcast)
+	s.wa = wa.New(filepath.Join(dataDir, "whatsmeow"), s.broadcast)
+	s.tg = telegram.New(filepath.Join(dataDir, "telegram"), s.broadcast)
+	s.dc = discord.New(filepath.Join(dataDir, "discord"), s.broadcast)
 	return s
 }
 
@@ -54,10 +59,7 @@ func (s *Server) Run(ctx context.Context) error {
 	defer ln.Close()
 	_ = os.Chmod(s.SocketPath, 0o600)
 
-	// Restore an existing session after the socket is listening.
-	go func() {
-		_ = s.wa.EnsureStarted(ctx)
-	}()
+	go func() { _ = s.wa.EnsureStarted(ctx) }()
 
 	go func() {
 		<-ctx.Done()
@@ -89,20 +91,16 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		s.mu.Unlock()
 	}()
 
-	// Push current status immediately.
 	state, label, _ := s.wa.Status()
 	s.write(conn, eventEnvelope(protocol.EventStatus, protocol.SessionStatusPayload{
-		State:        state,
-		AccountLabel: label,
+		State: state, AccountLabel: label,
 	}))
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
 	for scanner.Scan() {
-		line := scanner.Bytes()
 		var env protocol.Envelope
-		if err := json.Unmarshal(line, &env); err != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &env); err != nil {
 			s.write(conn, errorResponse("", "invalid_json", err.Error()))
 			continue
 		}
@@ -111,19 +109,48 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 }
 
 func (s *Server) dispatch(ctx context.Context, env protocol.Envelope) protocol.Envelope {
+	protoName := payloadString(env.Payload, "protocol")
+	if protoName == "" {
+		protoName = "whatsapp"
+	}
+
 	switch env.Method {
 	case protocol.MethodSessionStatus:
-		state, label, detail := s.wa.Status()
-		payload, _ := json.Marshal(protocol.SessionStatusPayload{
-			State:        state,
-			AccountLabel: label,
-			Detail:       detail,
-		})
+		var state, label string
+		switch protoName {
+		case "telegram":
+			state, label = s.tg.Status()
+		case "discord":
+			state, label = s.dc.Status()
+		default:
+			state, label, _ = s.wa.Status()
+		}
+		payload, _ := json.Marshal(protocol.SessionStatusPayload{State: state, AccountLabel: label})
 		return okResponse(env, payload)
 
 	case protocol.MethodSessionPairStart:
-		if err := s.wa.StartPairing(ctx); err != nil {
-			return errResponse(env, err.Error())
+		switch protoName {
+		case "telegram":
+			if id := payloadString(env.Payload, "apiId"); id != "" {
+				n, _ := strconv.Atoi(id)
+				s.tg.SetCredentials(n, payloadString(env.Payload, "apiHash"))
+			}
+			if err := s.tg.StartPairing(ctx); err != nil {
+				return errResponse(env, err.Error())
+			}
+		case "discord":
+			token := payloadString(env.Payload, "token")
+			asBot := payloadBool(env.Payload, "bot", true)
+			if token != "" {
+				s.dc.SetToken(token, asBot)
+			}
+			if err := s.dc.Connect(token, asBot); err != nil {
+				return errResponse(env, err.Error())
+			}
+		default:
+			if err := s.wa.StartPairing(ctx); err != nil {
+				return errResponse(env, err.Error())
+			}
 		}
 		payload, _ := json.Marshal(protocol.SessionStatusPayload{State: "awaiting_pairing"})
 		return okResponse(env, payload)
@@ -137,10 +164,44 @@ func (s *Server) dispatch(ctx context.Context, env protocol.Envelope) protocol.E
 		return okResponse(env, payload)
 
 	case protocol.MethodSessionLogout:
-		if err := s.wa.Logout(ctx); err != nil {
-			return errResponse(env, err.Error())
+		switch protoName {
+		case "telegram":
+			_ = s.tg.Logout(ctx)
+		case "discord":
+			_ = s.dc.Logout()
+		default:
+			_ = s.wa.Logout(ctx)
 		}
 		payload, _ := json.Marshal(protocol.SessionStatusPayload{State: "disconnected"})
+		return okResponse(env, payload)
+
+	case protocol.MethodChatsList:
+		var chats any
+		switch protoName {
+		case "telegram":
+			chats = s.tg.ListChats()
+		case "discord":
+			chats = s.dc.ListChats()
+		case "all":
+			chats = mergeChats(s.wa.ListChats(), s.tg.ListChats(), s.dc.ListChats())
+		default:
+			chats = s.wa.ListChats()
+		}
+		payload, _ := json.Marshal(map[string]any{"chats": chats})
+		return okResponse(env, payload)
+
+	case protocol.MethodMessagesList:
+		chatID := payloadString(env.Payload, "chatId")
+		var messages any
+		switch {
+		case len(chatID) > 3 && chatID[:3] == "tg:":
+			messages = s.tg.ListMessages(chatID)
+		case len(chatID) > 3 && chatID[:3] == "dc:":
+			messages = s.dc.ListMessages(chatID)
+		default:
+			messages = s.wa.ListMessages(chatID, 200)
+		}
+		payload, _ := json.Marshal(map[string]any{"messages": messages})
 		return okResponse(env, payload)
 
 	case protocol.MethodMessagesSendText:
@@ -148,19 +209,67 @@ func (s *Server) dispatch(ctx context.Context, env protocol.Envelope) protocol.E
 		if err := json.Unmarshal(env.Payload, &req); err != nil {
 			return errResponse(env, "invalid payload")
 		}
-		id, err := s.wa.SendText(ctx, req.ChatID, req.Text)
+		var id string
+		var err error
+		switch {
+		case len(req.ChatID) > 3 && req.ChatID[:3] == "tg:":
+			id, err = s.tg.SendText(ctx, req.ChatID, req.Text)
+		case len(req.ChatID) > 3 && req.ChatID[:3] == "dc:":
+			id, err = s.dc.SendText(req.ChatID, req.Text)
+		default:
+			id, err = s.wa.SendText(ctx, req.ChatID, req.Text)
+		}
 		if err != nil {
 			return errResponse(env, err.Error())
 		}
 		payload, _ := json.Marshal(map[string]string{"id": id})
 		return okResponse(env, payload)
 
-	case protocol.MethodChatsList, protocol.MethodMessagesList:
-		return errResponse(env, fmt.Sprintf("%s not fully implemented yet — pairing and text send work", env.Method))
-
 	default:
 		return errResponse(env, "unknown method")
 	}
+}
+
+func mergeChats(parts ...any) []map[string]any {
+	out := []map[string]any{}
+	for _, part := range parts {
+		b, _ := json.Marshal(part)
+		var list []map[string]any
+		_ = json.Unmarshal(b, &list)
+		out = append(out, list...)
+	}
+	return out
+}
+
+func payloadString(raw json.RawMessage, key string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	if v, ok := m[key].(float64); ok {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return ""
+}
+
+func payloadBool(raw json.RawMessage, key string, fallback bool) bool {
+	if len(raw) == 0 {
+		return fallback
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fallback
+	}
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return fallback
 }
 
 func (s *Server) broadcast(method string, payload any) {
@@ -169,10 +278,7 @@ func (s *Server) broadcast(method string, payload any) {
 		return
 	}
 	env := protocol.Envelope{
-		ID:      uuid.NewString(),
-		Type:    protocol.TypeEvent,
-		Method:  method,
-		Payload: raw,
+		ID: uuid.NewString(), Type: protocol.TypeEvent, Method: method, Payload: raw,
 	}
 	s.mu.Lock()
 	conns := make([]net.Conn, 0, len(s.subscribers))
@@ -199,43 +305,20 @@ func (s *Server) write(conn net.Conn, env protocol.Envelope) {
 
 func okResponse(env protocol.Envelope, payload json.RawMessage) protocol.Envelope {
 	ok := true
-	return protocol.Envelope{
-		ID:      env.ID,
-		Type:    protocol.TypeResponse,
-		Method:  env.Method,
-		OK:      &ok,
-		Payload: payload,
-	}
+	return protocol.Envelope{ID: env.ID, Type: protocol.TypeResponse, Method: env.Method, OK: &ok, Payload: payload}
 }
 
 func errResponse(env protocol.Envelope, message string) protocol.Envelope {
 	ok := false
-	return protocol.Envelope{
-		ID:     env.ID,
-		Type:   protocol.TypeResponse,
-		Method: env.Method,
-		OK:     &ok,
-		Error:  &message,
-	}
+	return protocol.Envelope{ID: env.ID, Type: protocol.TypeResponse, Method: env.Method, OK: &ok, Error: &message}
 }
 
 func errorResponse(id, method, message string) protocol.Envelope {
 	ok := false
-	return protocol.Envelope{
-		ID:     id,
-		Type:   protocol.TypeResponse,
-		Method: method,
-		OK:     &ok,
-		Error:  &message,
-	}
+	return protocol.Envelope{ID: id, Type: protocol.TypeResponse, Method: method, OK: &ok, Error: &message}
 }
 
 func eventEnvelope(method string, payload any) protocol.Envelope {
 	raw, _ := json.Marshal(payload)
-	return protocol.Envelope{
-		ID:      uuid.NewString(),
-		Type:    protocol.TypeEvent,
-		Method:  method,
-		Payload: raw,
-	}
+	return protocol.Envelope{ID: uuid.NewString(), Type: protocol.TypeEvent, Method: method, Payload: raw}
 }

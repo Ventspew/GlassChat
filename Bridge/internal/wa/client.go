@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
-	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -26,6 +26,7 @@ type Client struct {
 	dataDir string
 	log     waLog.Logger
 	sink    EventSink
+	store   *MemoryStore
 
 	mu     sync.Mutex
 	client *whatsmeow.Client
@@ -38,6 +39,7 @@ func New(dataDir string, sink EventSink) *Client {
 		dataDir: dataDir,
 		log:     waLog.Stdout("GlassChatWA", "INFO", true),
 		sink:    sink,
+		store:   NewMemoryStore(),
 		state:   "disconnected",
 	}
 }
@@ -47,6 +49,8 @@ func (c *Client) Status() (state, label, detail string) {
 	defer c.mu.Unlock()
 	return c.state, c.label, ""
 }
+
+func (c *Client) Store() *MemoryStore { return c.store }
 
 func (c *Client) setState(state, label string) {
 	c.mu.Lock()
@@ -60,6 +64,7 @@ func (c *Client) setState(state, label string) {
 	c.sink("session.status", map[string]any{
 		"state":        payloadState,
 		"accountLabel": payloadLabel,
+		"protocol":     "whatsapp",
 	})
 }
 
@@ -103,6 +108,7 @@ func (c *Client) start(ctx context.Context) error {
 			return err
 		}
 		c.setState("connected", displayLabel(client))
+		go c.refreshDirectory(context.Background())
 		return nil
 	}
 
@@ -134,7 +140,9 @@ func (c *Client) StartPairing(ctx context.Context) error {
 		c.sink("session.pair.success", map[string]any{
 			"jid":          client.Store.ID.String(),
 			"accountLabel": displayLabel(client),
+			"protocol":     "whatsapp",
 		})
+		go c.refreshDirectory(context.Background())
 		return nil
 	}
 
@@ -157,7 +165,7 @@ func (c *Client) StartPairing(ctx context.Context) error {
 		for item := range qrChan {
 			switch item.Event {
 			case "code":
-				c.sink("session.pair.qr", map[string]any{"code": item.Code})
+				c.sink("session.pair.qr", map[string]any{"code": item.Code, "protocol": "whatsapp"})
 			case "success":
 				c.setState("connected", displayLabel(client))
 				jid := ""
@@ -167,14 +175,16 @@ func (c *Client) StartPairing(ctx context.Context) error {
 				c.sink("session.pair.success", map[string]any{
 					"jid":          jid,
 					"accountLabel": displayLabel(client),
+					"protocol":     "whatsapp",
 				})
+				go c.refreshDirectory(context.Background())
 			case "timeout":
 				c.setState("disconnected", "")
-				c.sink("session.pair.timeout", map[string]any{"detail": "QR code expired"})
+				c.sink("session.pair.timeout", map[string]any{"detail": "QR code expired", "protocol": "whatsapp"})
 			default:
 				if item.Error != nil {
 					c.setState("error", "")
-					c.sink("session.pair.error", map[string]any{"detail": item.Error.Error()})
+					c.sink("session.pair.error", map[string]any{"detail": item.Error.Error(), "protocol": "whatsapp"})
 				}
 			}
 		}
@@ -198,6 +208,7 @@ func (c *Client) ConnectExisting(ctx context.Context) error {
 	}
 	if client.IsConnected() {
 		c.setState("connected", displayLabel(client))
+		go c.refreshDirectory(ctx)
 		return nil
 	}
 	c.setState("connecting", displayLabel(client))
@@ -206,6 +217,7 @@ func (c *Client) ConnectExisting(ctx context.Context) error {
 		return err
 	}
 	c.setState("connected", displayLabel(client))
+	go c.refreshDirectory(ctx)
 	return nil
 }
 
@@ -214,6 +226,7 @@ func (c *Client) Logout(ctx context.Context) error {
 	client := c.client
 	c.mu.Unlock()
 	if client == nil {
+		c.store.Clear()
 		c.setState("disconnected", "")
 		return nil
 	}
@@ -222,6 +235,7 @@ func (c *Client) Logout(ctx context.Context) error {
 		c.mu.Lock()
 		c.client = nil
 		c.mu.Unlock()
+		c.store.Clear()
 		c.setState("disconnected", "")
 		return err
 	}
@@ -229,8 +243,8 @@ func (c *Client) Logout(ctx context.Context) error {
 	c.mu.Lock()
 	c.client = nil
 	c.mu.Unlock()
-	// Wipe store file so a fresh QR can be generated.
 	_ = os.Remove(filepath.Join(c.dataDir, "whatsmeow.db"))
+	c.store.Clear()
 	c.setState("disconnected", "")
 	return nil
 }
@@ -251,45 +265,284 @@ func (c *Client) SendText(ctx context.Context, chatID, text string) (string, err
 	if err != nil {
 		return "", err
 	}
+	rec := MessageRecord{
+		ID:         resp.ID,
+		ChatID:     chatID,
+		SenderName: "You",
+		Text:       text,
+		Timestamp:  nowUnix(),
+		FromMe:     true,
+	}
+	c.store.AppendMessage(rec)
+	c.sink("messages.event", map[string]any{
+		"id":         rec.ID,
+		"chatId":     rec.ChatID,
+		"senderName": rec.SenderName,
+		"text":       rec.Text,
+		"timestamp":  rec.Timestamp,
+		"fromMe":     true,
+		"protocol":   "whatsapp",
+	})
 	return resp.ID, nil
+}
+
+func (c *Client) ListChats() []ChatRecord {
+	return c.store.ListChats()
+}
+
+func (c *Client) ListMessages(chatID string, limit int) []MessageRecord {
+	return c.store.ListMessages(chatID, limit)
+}
+
+func (c *Client) refreshDirectory(ctx context.Context) {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.IsLoggedIn() {
+		return
+	}
+
+	if client.Store != nil && client.Store.Contacts != nil {
+		contacts, err := client.Store.Contacts.GetAllContacts(ctx)
+		if err == nil {
+			for jid, info := range contacts {
+				name := firstNonEmpty(info.FullName, info.PushName, info.BusinessName)
+				if name == "" {
+					continue
+				}
+				c.store.SetName(jid.String(), name)
+				c.store.UpsertChat(ChatRecord{
+					ID:       jid.String(),
+					Title:    name,
+					Kind:     "individual",
+					Protocol: "whatsapp",
+				})
+			}
+		}
+	}
+
+	groups, err := client.GetJoinedGroups(ctx)
+	if err == nil {
+		for _, g := range groups {
+			title := g.Name
+			if title == "" {
+				title = g.JID.String()
+			}
+			c.store.SetName(g.JID.String(), title)
+			c.store.UpsertChat(ChatRecord{
+				ID:       g.JID.String(),
+				Title:    title,
+				Kind:     "group",
+				Protocol: "whatsapp",
+			})
+		}
+	}
+
+	c.sink("chats.updated", map[string]any{
+		"protocol": "whatsapp",
+		"chats":    c.store.ListChats(),
+	})
 }
 
 func (c *Client) handleEvent(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
-		text := ""
-		if v.Message != nil {
-			text = v.Message.GetConversation()
-			if text == "" && v.Message.GetExtendedTextMessage() != nil {
-				text = v.Message.GetExtendedTextMessage().GetText()
-			}
-		}
+		text := messageText(v)
 		if text == "" {
 			return
 		}
 		sender := v.Info.PushName
 		if sender == "" {
+			sender = c.store.Name(v.Info.Sender.String())
+		}
+		if sender == "" {
 			sender = v.Info.Sender.User
 		}
-		c.sink("messages.event", map[string]any{
-			"id":         v.Info.ID,
-			"chatId":     v.Info.Chat.String(),
-			"senderName": sender,
-			"text":       text,
-			"timestamp":  v.Info.Timestamp.Unix(),
-			"fromMe":     v.Info.IsFromMe,
+		chatID := v.Info.Chat.String()
+		if name := c.store.Name(chatID); name == "" && !v.Info.IsGroup {
+			c.store.SetName(chatID, sender)
+		}
+		rec := MessageRecord{
+			ID:         v.Info.ID,
+			ChatID:     chatID,
+			SenderName: sender,
+			Text:       text,
+			Timestamp:  v.Info.Timestamp.Unix(),
+			FromMe:     v.Info.IsFromMe,
+		}
+		c.store.AppendMessage(rec)
+		kind := "individual"
+		if v.Info.IsGroup {
+			kind = "group"
+		}
+		title := c.store.Name(chatID)
+		if title == "" {
+			title = sender
+		}
+		c.store.UpsertChat(ChatRecord{
+			ID:           chatID,
+			Title:        title,
+			Kind:         kind,
+			LastPreview:  text,
+			LastActivity: rec.Timestamp,
+			Protocol:     "whatsapp",
 		})
+		c.sink("messages.event", map[string]any{
+			"id":         rec.ID,
+			"chatId":     rec.ChatID,
+			"senderName": rec.SenderName,
+			"text":       rec.Text,
+			"timestamp":  rec.Timestamp,
+			"fromMe":     rec.FromMe,
+			"protocol":   "whatsapp",
+		})
+
+	case *events.HistorySync:
+		c.applyHistorySync(v)
+		c.sink("chats.updated", map[string]any{
+			"protocol": "whatsapp",
+			"chats":    c.store.ListChats(),
+		})
+
 	case *events.Connected:
 		c.mu.Lock()
 		client := c.client
 		c.mu.Unlock()
 		c.setState("connected", displayLabel(client))
+		go c.refreshDirectory(context.Background())
+
 	case *events.Disconnected:
 		c.setState("disconnected", "")
+
 	case *events.LoggedOut:
 		c.setState("disconnected", "")
-		c.sink("session.pair.error", map[string]any{"detail": "Logged out from phone"})
+		c.sink("session.pair.error", map[string]any{"detail": "Logged out from phone", "protocol": "whatsapp"})
 	}
+}
+
+func (c *Client) applyHistorySync(evt *events.HistorySync) {
+	if evt == nil || evt.Data == nil {
+		return
+	}
+	for _, pn := range evt.Data.GetPushnames() {
+		c.store.SetName(pn.GetID(), pn.GetPushname())
+	}
+	for _, conv := range evt.Data.GetConversations() {
+		chatID := conv.GetID()
+		if chatID == "" {
+			continue
+		}
+		title := c.store.Name(chatID)
+		if title == "" {
+			title = chatID
+		}
+		kind := "individual"
+		if strings.HasSuffix(chatID, "@g.us") {
+			kind = "group"
+			if n := conv.GetName(); n != "" {
+				title = n
+				c.store.SetName(chatID, n)
+			}
+		}
+		var lastPreview string
+		var lastTS int64
+		for _, wrapped := range conv.GetMessages() {
+			wm := wrapped.GetMessage()
+			if wm == nil {
+				continue
+			}
+			key := wm.GetKey()
+			if key == nil {
+				continue
+			}
+			text := webMessageText(wm)
+			if text == "" {
+				continue
+			}
+			fromMe := key.GetFromMe()
+			sender := "Contact"
+			if fromMe {
+				sender = "You"
+			} else if p := key.GetParticipant(); p != "" {
+				sender = c.store.Name(p)
+				if sender == "" {
+					sender = p
+				}
+			} else if !strings.HasSuffix(chatID, "@g.us") {
+				sender = firstNonEmpty(c.store.Name(chatID), chatID)
+			}
+			ts := int64(wm.GetMessageTimestamp())
+			rec := MessageRecord{
+				ID:         key.GetID(),
+				ChatID:     chatID,
+				SenderName: sender,
+				Text:       text,
+				Timestamp:  ts,
+				FromMe:     fromMe,
+			}
+			c.store.AppendMessage(rec)
+			lastPreview = text
+			if ts > lastTS {
+				lastTS = ts
+			}
+		}
+		c.store.UpsertChat(ChatRecord{
+			ID:           chatID,
+			Title:        title,
+			Kind:         kind,
+			LastPreview:  lastPreview,
+			LastActivity: lastTS,
+			Protocol:     "whatsapp",
+		})
+	}
+}
+
+func messageText(v *events.Message) string {
+	if v.Message == nil {
+		return ""
+	}
+	if t := v.Message.GetConversation(); t != "" {
+		return t
+	}
+	if ext := v.Message.GetExtendedTextMessage(); ext != nil {
+		return ext.GetText()
+	}
+	if img := v.Message.GetImageMessage(); img != nil {
+		if cap := img.GetCaption(); cap != "" {
+			return cap
+		}
+		return "[Image]"
+	}
+	if doc := v.Message.GetDocumentMessage(); doc != nil {
+		if cap := doc.GetCaption(); cap != "" {
+			return cap
+		}
+		return "[Document] " + doc.GetFileName()
+	}
+	if v.Message.GetAudioMessage() != nil {
+		return "[Voice message]"
+	}
+	return ""
+}
+
+func webMessageText(wm interface{ GetMessage() *waE2E.Message }) string {
+	msg := wm.GetMessage()
+	if msg == nil {
+		return ""
+	}
+	if t := msg.GetConversation(); t != "" {
+		return t
+	}
+	if ext := msg.GetExtendedTextMessage(); ext != nil {
+		return ext.GetText()
+	}
+	if img := msg.GetImageMessage(); img != nil {
+		if cap := img.GetCaption(); cap != "" {
+			return cap
+		}
+		return "[Image]"
+	}
+	return ""
 }
 
 func displayLabel(client *whatsmeow.Client) string {
@@ -302,5 +555,11 @@ func displayLabel(client *whatsmeow.Client) string {
 	return "+" + client.Store.ID.User
 }
 
-// KeepAlive helps the process stay responsive while waiting for QR scans.
-func KeepAlive() { time.Sleep(time.Millisecond) }
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}

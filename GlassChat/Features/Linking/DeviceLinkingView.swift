@@ -2,42 +2,76 @@ import SwiftUI
 
 struct DeviceLinkingView: View {
     @Environment(AppState.self) private var appState
+    @State private var selectedProtocol: MessengerProtocol = .whatsapp
     @State private var qrCode: String?
     @State private var statusMessage: String?
     @State private var isBusy = false
+    @State private var telegramAPIID = ""
+    @State private var telegramAPIHash = ""
+    @State private var discordToken = ""
+    @State private var discordAsBot = true
 
     var body: some View {
         Form {
             Section("Backend") {
                 Picker("Messaging backend", selection: Binding(
                     get: { appState.backendKind },
-                    set: { kind in
-                        appState.switchBackend(kind)
-                    }
+                    set: { appState.switchBackend($0) }
                 )) {
                     ForEach(MessagingBackendKind.allCases) { kind in
                         Text(kind.displayName).tag(kind)
                     }
                 }
-
                 LabeledContent("Status", value: appState.connectionState.label)
             }
 
-            Section("WhatsApp pairing") {
-                Text("Scan this QR code in WhatsApp → Settings → Linked Devices → Link a Device. GlassChat uses the official multi-device protocol via a local helper — not WhatsApp Web.")
+            Section("Protocol") {
+                Picker("Service", selection: $selectedProtocol) {
+                    Text("WhatsApp").tag(MessengerProtocol.whatsapp)
+                    Text("Telegram").tag(MessengerProtocol.telegram)
+                    Text("Discord").tag(MessengerProtocol.discord)
+                }
+                .pickerStyle(.segmented)
+                Text(protocolHelp)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
 
+            if selectedProtocol == .telegram {
+                Section("Telegram credentials") {
+                    TextField("api_id", text: $telegramAPIID)
+                    SecureField("api_hash", text: $telegramAPIHash)
+                    Text("Create an app at my.telegram.org (open source: gotd/td).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if selectedProtocol == .discord {
+                Section("Discord token") {
+                    SecureField("Bot token (recommended)", text: $discordToken)
+                    Toggle("Bot token (ToS-safe)", isOn: $discordAsBot)
+                    Text("Open source: discordgo / DiscordKit. Unofficial user clients violate Discord ToS — prefer a bot token.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Link account") {
                 HStack {
                     Spacer()
-                    if let qrCode {
+                    if let qrCode, selectedProtocol != .discord {
                         QRCodeView(code: qrCode, size: 220)
+                    } else if selectedProtocol == .discord {
+                        Image(systemName: "gamecontroller.fill")
+                            .font(.system(size: 64))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 220, height: 220)
                     } else {
                         placeholderQR
                     }
                     Spacer()
                 }
-                .padding(.vertical, 8)
 
                 if let statusMessage {
                     Text(statusMessage)
@@ -46,35 +80,53 @@ struct DeviceLinkingView: View {
                 }
 
                 HStack {
-                    Button(isBusy ? "Working…" : "Show pairing QR") {
+                    Button(isBusy ? "Working…" : connectTitle) {
                         Task { await startPairing() }
                     }
-                    .disabled(isBusy || appState.backendKind != .whatsmeowBridge)
+                    .disabled(isBusy)
 
-                    Button("Logout / unlink") {
+                    Button("Logout") {
                         Task { await logout() }
                     }
-                    .disabled(isBusy || appState.backendKind != .whatsmeowBridge)
+                    .disabled(isBusy)
                 }
             }
 
-            Section("Risk notice") {
-                Text("Unofficial multi-device clients may break when WhatsApp changes servers, and may risk account restrictions. Use at your own risk. GlassChat does not bypass encryption, device authorization, or anti-abuse protections.")
+            Section("Open-source stack") {
+                Text("WhatsApp: whatsmeow (yawac-style). Telegram: gotd/td. Discord: discordgo. See Docs/OPEN_SOURCE_RESEARCH.md.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .onAppear {
-            if appState.backendKind == .whatsmeowBridge {
-                Task { await refreshQRFromService() }
-            }
-        }
         .onChange(of: appState.connectionState) { _, newValue in
             if case .connected = newValue {
-                qrCode = nil
-                statusMessage = "Linked successfully."
+                if selectedProtocol != .whatsapp && selectedProtocol != .telegram {
+                    qrCode = nil
+                }
+                statusMessage = "Linked / connected."
             }
+        }
+    }
+
+    private var connectTitle: String {
+        switch selectedProtocol {
+        case .discord: return "Connect Discord"
+        case .telegram: return "Show Telegram QR"
+        default: return "Show WhatsApp QR"
+        }
+    }
+
+    private var protocolHelp: String {
+        switch selectedProtocol {
+        case .whatsapp:
+            return "Scan in WhatsApp → Linked Devices. Uses whatsmeow multi-device protocol."
+        case .telegram:
+            return "Scan in Telegram → Settings → Devices → Link Desktop Device."
+        case .discord:
+            return "Connect with a bot token from the Discord Developer Portal."
+        case .all:
+            return ""
         }
     }
 
@@ -93,14 +145,24 @@ struct DeviceLinkingView: View {
 
     private func startPairing() async {
         isBusy = true
-        statusMessage = "Starting bridge and requesting QR…"
+        statusMessage = "Starting local bridge…"
         do {
             if appState.backendKind != .whatsmeowBridge {
                 appState.switchBackend(.whatsmeowBridge)
             }
-            try await appState.startWhatsAppPairing()
-            await pollForQR()
-            statusMessage = "Scan the QR code with your phone."
+            try await appState.startPairing(
+                protocolKind: selectedProtocol,
+                telegramAPIID: telegramAPIID.isEmpty ? nil : telegramAPIID,
+                telegramAPIHash: telegramAPIHash.isEmpty ? nil : telegramAPIHash,
+                discordToken: discordToken.isEmpty ? nil : discordToken,
+                discordBot: discordAsBot
+            )
+            if selectedProtocol != .discord {
+                await pollForQR()
+                statusMessage = "Scan the QR code."
+            } else {
+                statusMessage = "Connecting Discord…"
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -110,7 +172,7 @@ struct DeviceLinkingView: View {
     private func logout() async {
         isBusy = true
         do {
-            try await appState.logoutWhatsApp()
+            try await appState.logout(protocolKind: selectedProtocol)
             qrCode = nil
             statusMessage = "Logged out."
         } catch {
@@ -120,7 +182,7 @@ struct DeviceLinkingView: View {
     }
 
     private func pollForQR() async {
-        for _ in 0..<40 {
+        for _ in 0..<60 {
             if let code = await appState.currentPairingQRCode() {
                 qrCode = code
                 return
@@ -128,11 +190,7 @@ struct DeviceLinkingView: View {
             try? await Task.sleep(for: .milliseconds(250))
         }
         if qrCode == nil {
-            statusMessage = "Timed out waiting for QR. Is the bridge built?"
+            statusMessage = "Timed out waiting for QR."
         }
-    }
-
-    private func refreshQRFromService() async {
-        qrCode = await appState.currentPairingQRCode()
     }
 }

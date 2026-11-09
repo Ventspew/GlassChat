@@ -95,24 +95,99 @@ actor WhatsmeowMessagingService: MessagingService {
         }
     }
 
-    func startPairing() async throws {
+    func startPairing(
+        protocolKind: MessengerProtocol = .whatsapp,
+        telegramAPIID: String? = nil,
+        telegramAPIHash: String? = nil,
+        discordToken: String? = nil,
+        discordBot: Bool = true
+    ) async throws {
         setConnection(.awaitingPairing)
         latestQRCode = nil
         try await ensureClient()
         guard let client else {
             throw MessagingError.bridgeUnavailable("Bridge client missing")
         }
-        _ = try await client.request(method: .sessionPairStart)
+        var payload: [String: BridgeJSON] = [
+            "protocol": .string(protocolKind == .all ? "whatsapp" : protocolKind.rawValue)
+        ]
+        if let telegramAPIID { payload["apiId"] = .string(telegramAPIID) }
+        if let telegramAPIHash { payload["apiHash"] = .string(telegramAPIHash) }
+        if let discordToken { payload["token"] = .string(discordToken) }
+        payload["bot"] = .bool(discordBot)
+        _ = try await client.request(method: .sessionPairStart, payload: payload)
     }
 
-    func logout() async throws {
+    func logout(protocolKind: MessengerProtocol = .whatsapp) async throws {
         guard let client else { return }
-        _ = try await client.request(method: .sessionLogout)
+        _ = try await client.request(
+            method: .sessionLogout,
+            payload: ["protocol": .string(protocolKind == .all ? "whatsapp" : protocolKind.rawValue)]
+        )
         latestQRCode = nil
-        conversations = []
-        messagesByChat = [:]
+        if protocolKind == .all || protocolKind == .whatsapp {
+            conversations.removeAll { $0.messenger == .whatsapp || protocolKind == .all }
+            if protocolKind == .all {
+                conversations = []
+                messagesByChat = [:]
+            }
+        } else {
+            conversations.removeAll { $0.messenger == protocolKind }
+        }
         setConnection(.disconnected)
         publishConversations()
+    }
+
+    func refreshChats(protocolKind: MessengerProtocol = .all) async {
+        guard let client else { return }
+        do {
+            let response = try await client.request(
+                method: .chatsList,
+                payload: ["protocol": .string(protocolKind.rawValue)]
+            )
+            applyChatsPayload(response.payload?["chats"])
+        } catch {
+            // Keep existing local cache.
+        }
+    }
+
+    func loadMessages(for chatID: ChatID) async {
+        guard let client else { return }
+        do {
+            let response = try await client.request(
+                method: .messagesList,
+                payload: ["chatId": .string(chatID.rawValue)]
+            )
+            guard let rows = response.payload?["messages"]?.arrayValue else { return }
+            var list: [Message] = []
+            for row in rows {
+                guard let obj = row.objectValue else { continue }
+                let id = obj["id"]?.stringValue ?? UUID().uuidString
+                let text = obj["text"]?.stringValue ?? ""
+                let fromMe = {
+                    if case .bool(let value) = obj["fromMe"] { return value }
+                    return false
+                }()
+                let ts = obj["timestamp"]?.intValue.map { Date(timeIntervalSince1970: TimeInterval($0)) } ?? .now
+                list.append(
+                    Message(
+                        id: MessageID(id),
+                        chatID: chatID,
+                        senderName: obj["senderName"]?.stringValue ?? (fromMe ? "You" : "Contact"),
+                        direction: fromMe ? .outgoing : .incoming,
+                        body: .text(text),
+                        timestamp: ts,
+                        status: .delivered,
+                        replyToID: nil,
+                        reaction: nil
+                    )
+                )
+            }
+            messagesByChat[chatID] = list.sorted { $0.timestamp < $1.timestamp }
+            publishMessages(chatID)
+        } catch {
+            // Ignore — live events still work.
+        }
     }
 
     func send(text: String, to chatID: ChatID, replyTo: MessageID?) async throws {
@@ -171,8 +246,9 @@ actor WhatsmeowMessagingService: MessagingService {
             setConnection(.awaitingPairing)
         case .pairSuccess:
             latestQRCode = nil
-            let label = envelope.payloadString("accountLabel") ?? "WhatsApp"
+            let label = envelope.payloadString("accountLabel") ?? "Connected"
             setConnection(.connected(accountLabel: label))
+            Task { await refreshChats(protocolKind: .all) }
         case .pairTimeout:
             latestQRCode = nil
             setConnection(.error("QR code expired — start pairing again"))
@@ -183,9 +259,57 @@ actor WhatsmeowMessagingService: MessagingService {
             applyStatusPayload(envelope)
         case .messageEvent:
             ingestIncoming(envelope)
+        case .chatsUpdated:
+            applyChatsPayload(envelope.payload?["chats"])
         case .none:
             break
         }
+    }
+
+    private func applyChatsPayload(_ value: BridgeJSON?) {
+        guard let rows = value?.arrayValue else { return }
+        var mapped: [Conversation] = []
+        for row in rows {
+            guard let obj = row.objectValue,
+                  let id = obj["id"]?.stringValue else { continue }
+            let title = obj["title"]?.stringValue ?? id
+            let kindRaw = obj["kind"]?.stringValue ?? "individual"
+            let kind: ConversationKind = kindRaw == "group" ? .group : .individual
+            let protocolRaw = obj["protocol"]?.stringValue ?? "whatsapp"
+            let messenger = MessengerProtocol(rawValue: protocolRaw) ?? .whatsapp
+            let preview = obj["lastPreview"]?.stringValue ?? ""
+            let unread = obj["unreadCount"]?.intValue ?? 0
+            let pinned = {
+                if case .bool(let value) = obj["isPinned"] { return value }
+                return false
+            }()
+            let activity = obj["lastActivity"]?.intValue.map { Date(timeIntervalSince1970: TimeInterval($0)) } ?? .now
+            mapped.append(
+                Conversation(
+                    id: ChatID(id),
+                    title: title,
+                    kind: kind,
+                    participants: [Contact(id: ContactID(id), displayName: title, phoneNumber: nil)],
+                    lastMessagePreview: preview,
+                    lastActivity: activity,
+                    unreadCount: unread,
+                    isPinned: pinned,
+                    avatarSymbol: kind == .group ? "person.3.fill" : messenger.symbolName,
+                    avatarHue: Double(abs(id.hashValue % 1000)) / 1000.0,
+                    messenger: messenger
+                )
+            )
+        }
+        // Merge by id so other protocols aren't wiped when one emits an update.
+        var byID = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
+        for chat in mapped {
+            byID[chat.id] = chat
+        }
+        conversations = byID.values.sorted {
+            if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
+            return $0.lastActivity > $1.lastActivity
+        }
+        publishConversations()
     }
 
     private func applyStatusPayload(_ envelope: BridgeEnvelope) {
@@ -215,7 +339,9 @@ actor WhatsmeowMessagingService: MessagingService {
         }()
         let sender = envelope.payloadString("senderName") ?? "Contact"
         let chatID = ChatID(chat)
-        ensureConversation(chatID: chatID, title: sender)
+        let protocolRaw = envelope.payloadString("protocol") ?? "whatsapp"
+        let messenger = MessengerProtocol(rawValue: protocolRaw) ?? .whatsapp
+        ensureConversation(chatID: chatID, title: sender, messenger: messenger)
 
         let message = Message(
             id: MessageID(id),
@@ -231,7 +357,7 @@ actor WhatsmeowMessagingService: MessagingService {
         appendMessage(message)
     }
 
-    private func ensureConversation(chatID: ChatID, title: String) {
+    private func ensureConversation(chatID: ChatID, title: String, messenger: MessengerProtocol) {
         if conversations.contains(where: { $0.id == chatID }) { return }
         conversations.insert(
             Conversation(
@@ -243,8 +369,9 @@ actor WhatsmeowMessagingService: MessagingService {
                 lastActivity: .now,
                 unreadCount: 0,
                 isPinned: false,
-                avatarSymbol: "person.fill",
-                avatarHue: Double.random(in: 0...1)
+                avatarSymbol: messenger.symbolName,
+                avatarHue: Double.random(in: 0...1),
+                messenger: messenger
             ),
             at: 0
         )

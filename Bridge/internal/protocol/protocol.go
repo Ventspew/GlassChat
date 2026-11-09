@@ -33,6 +33,7 @@ const (
 	EventPairError   = "session.pair.error"
 	EventStatus      = "session.status"
 	EventMessage     = "messages.event"
+	EventChatsUpdated = "chats.updated"
 )
 
 type SessionStatusPayload struct {

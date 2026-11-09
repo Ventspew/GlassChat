@@ -9,6 +9,18 @@ struct SidebarView: View {
         let theme = themeEngine.current
 
         VStack(spacing: 0) {
+            Picker("Protocol", selection: Binding(
+                get: { appState.protocolFilter },
+                set: { appState.setProtocolFilter($0) }
+            )) {
+                ForEach(MessengerProtocol.allCases) { proto in
+                    Text(proto.displayName).tag(proto)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
@@ -22,7 +34,7 @@ struct SidebarView: View {
             .padding(10)
             .background(theme.composerBackground.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 12)
-            .padding(.top, 12)
+            .padding(.top, 8)
             .padding(.bottom, 8)
 
             List(selection: Binding(

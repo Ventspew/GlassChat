@@ -6,13 +6,18 @@ Not a WhatsApp Web wrapper — no Electron, Tauri, or WKWebView scraping.
 
 > **Unofficial.** Protocol integrations can break and may risk account restrictions. GlassChat does not bypass encryption, device authorization, or anti-abuse protections.
 
-## Features (0.2)
+## Features (0.3)
 
 - Native Messages-inspired UI + theme engine
 - On-device translation preview before send
-- **QR device linking** via whatsmeow multi-device protocol
+- **WhatsApp** via [whatsmeow](https://github.com/tulir/whatsmeow) (QR + history sync + chats) — inspired by [yawac](https://github.com/vadika/yawac)
+- **Telegram** via [gotd/td](https://github.com/gotd/td) (QR login; needs api_id/hash)
+- **Discord** via [discordgo](https://github.com/bwmarrin/discordgo) (bot token recommended)
+- Unified inbox with protocol filter
 - Local Go bridge (bundled inside the `.app`)
 - GitHub Actions builds a downloadable `GlassChat-macOS.zip`
+
+See [Docs/OPEN_SOURCE_RESEARCH.md](Docs/OPEN_SOURCE_RESEARCH.md).
 
 ## Requirements
 

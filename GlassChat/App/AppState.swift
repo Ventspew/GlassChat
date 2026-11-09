@@ -16,6 +16,7 @@ final class AppState {
     private(set) var searchText: String = ""
     private(set) var sidebarWidth: Double = 280
     private(set) var backendKind: MessagingBackendKind = .mock
+    private(set) var protocolFilter: MessengerProtocol = .all
 
     var translationService: any TranslationServicing = PreviewTranslationService()
 
@@ -26,9 +27,13 @@ final class AppState {
     private var connectionTask: Task<Void, Never>?
 
     var filteredConversations: [Conversation] {
+        var list = conversations
+        if protocolFilter != .all {
+            list = list.filter { $0.messenger == protocolFilter }
+        }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return conversations }
-        return conversations.filter {
+        guard !query.isEmpty else { return list }
+        return list.filter {
             $0.title.localizedCaseInsensitiveContains(query)
                 || $0.lastMessagePreview.localizedCaseInsensitiveContains(query)
         }
@@ -50,6 +55,9 @@ final class AppState {
             return
         }
         messageTask = Task {
+            if backendKind == .whatsmeowBridge {
+                await whatsmeowService.loadMessages(for: id)
+            }
             let stream = await activeService().observeMessages(in: id)
             for await list in stream {
                 guard !Task.isCancelled else { break }
@@ -58,6 +66,14 @@ final class AppState {
         }
         Task {
             try? await activeService().markRead(chatID: id)
+        }
+    }
+
+    func setProtocolFilter(_ filter: MessengerProtocol) {
+        protocolFilter = filter
+        UserDefaults.standard.set(filter.rawValue, forKey: "glasschat.protocolFilter")
+        if backendKind == .whatsmeowBridge {
+            Task { await whatsmeowService.refreshChats(protocolKind: filter) }
         }
     }
 
@@ -93,14 +109,34 @@ final class AppState {
     }
 
     func startWhatsAppPairing() async throws {
+        try await startPairing(protocolKind: .whatsapp)
+    }
+
+    func startPairing(
+        protocolKind: MessengerProtocol,
+        telegramAPIID: String? = nil,
+        telegramAPIHash: String? = nil,
+        discordToken: String? = nil,
+        discordBot: Bool = true
+    ) async throws {
         backendKind = .whatsmeowBridge
         UserDefaults.standard.set(MessagingBackendKind.whatsmeowBridge.rawValue, forKey: "glasschat.backend")
         startObserving()
-        try await whatsmeowService.startPairing()
+        try await whatsmeowService.startPairing(
+            protocolKind: protocolKind,
+            telegramAPIID: telegramAPIID,
+            telegramAPIHash: telegramAPIHash,
+            discordToken: discordToken,
+            discordBot: discordBot
+        )
     }
 
     func logoutWhatsApp() async throws {
-        try await whatsmeowService.logout()
+        try await whatsmeowService.logout(protocolKind: .whatsapp)
+    }
+
+    func logout(protocolKind: MessengerProtocol) async throws {
+        try await whatsmeowService.logout(protocolKind: protocolKind)
     }
 
     func currentPairingQRCode() async -> String? {
@@ -124,6 +160,10 @@ final class AppState {
            let kind = MessagingBackendKind(rawValue: backend) {
             backendKind = kind
             startObserving()
+        }
+        if let filter = UserDefaults.standard.string(forKey: "glasschat.protocolFilter"),
+           let kind = MessengerProtocol(rawValue: filter) {
+            protocolFilter = kind
         }
     }
 

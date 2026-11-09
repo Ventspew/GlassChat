@@ -66,11 +66,14 @@ See in-app **Settings → Features** and `FeatureCatalog` in source.
 - Theme engine with five built-ins + live overrides
 - Composer translation preview
 - Mock messaging backend with sample conversations
-- whatsmeow Go bridge with **QR pairing**, session restore, text send, incoming text events
+- whatsmeow Go bridge with **QR pairing**, HistorySync chat list, text send/receive
+- Telegram via **gotd/td** (QR + dialogs)
+- Discord via **discordgo** (bot token)
+- Unified inbox with protocol filter (`wa` / `tg` / `dc`)
 
 ### Planned
 
-- Full chat history / contact sync UI
+- Richer Telegram send path + full message history pagination
 - Media, voice, reactions over the wire
 - Native notifications, full search
 

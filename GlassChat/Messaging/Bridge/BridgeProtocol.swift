@@ -7,6 +7,7 @@ enum BridgeMethod: String, Sendable {
     case sessionLogout = "session.logout"
     case messagesSendText = "messages.send.text"
     case chatsList = "chats.list"
+    case messagesList = "messages.list"
 }
 
 enum BridgeEvent: String, Sendable {
@@ -16,6 +17,7 @@ enum BridgeEvent: String, Sendable {
     case pairError = "session.pair.error"
     case sessionStatus = "session.status"
     case messageEvent = "messages.event"
+    case chatsUpdated = "chats.updated"
 }
 
 struct BridgeEnvelope: Codable, Sendable {
@@ -72,6 +74,24 @@ enum BridgeJSON: Codable, Sendable, Hashable {
 
     var stringValue: String? {
         if case .string(let value) = self { return value }
+        return nil
+    }
+
+    var intValue: Int? {
+        switch self {
+        case .int(let value): return value
+        case .double(let value): return Int(value)
+        default: return nil
+        }
+    }
+
+    var arrayValue: [BridgeJSON]? {
+        if case .array(let value) = self { return value }
+        return nil
+    }
+
+    var objectValue: [String: BridgeJSON]? {
+        if case .object(let value) = self { return value }
         return nil
     }
 }
